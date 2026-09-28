@@ -1,0 +1,29 @@
+{
+  "name": "ledger",
+  "version": "0.0.0",
+  "description": "Daric Platform: Ledger",
+  "author": "DaricLabs",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "repository": {
+    "url": "https://github.com/DaricLabs/ledger"
+  },
+  "scripts": {
+    "format": "prettier --write \"apps/**/*.{ts,json}\" \"packages/**/*.{ts,json}\"",
+    "lint": "oxlint --type-aware apps/ packages/"
+  },
+  "packageManager": "pnpm@12.6.0",
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "12.6.0",
+      "onFail": "download"
+    }
+  },
+  "devDependencies": {
+    "oxlint": "^1.85.0",
+    "oxlint-tsgolint": "^7.0.2003",
+    "prettier": "^3.9.9"
+  }
+}
