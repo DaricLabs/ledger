@@ -18,9 +18,17 @@
 --   boundary (DTO layer).
 --
 -- Audit model:
---   ledger_logs are written synchronously with ledger mutations.
---   ledger_audit_anchors are written asynchronously by a worker and are
---   chained and gap-checked to form a tamper-evident sequence.
+--   ledger_logs are written synchronously with ledger mutations. Each log
+--   gets a per-ledger, gap-free `seq` (assigned by trigger under a lock on
+--   the ledgers row), so seq order equals COMMIT order. A plain identity id
+--   cannot give that guarantee. ledger_audit_anchors are written
+--   asynchronously by a worker; each anchor must start at exactly
+--   previous.to_log_seq + 1, so no log can be skipped.
+--
+-- Append-only note:
+--   The append-only triggers stop normal clients. The table owner or a
+--   superuser can still disable them, so real protection also needs a
+--   least-privilege application role (no TRUNCATE, no ownership).
 --
 -- Stored-program policy:
 --   Business logic for creating/reverting transactions lives in the
@@ -110,12 +118,17 @@ create table ledgers (
   organization_id uuidv7 not null,
   name            ledger_name not null,
   metadata        json_obj not null default '{}',
+  last_log_seq    bigint not null default 0,
   created_at      timestamptz not null default now(),
 
   unique (organization_id, name),
-  unique (organization_id, id)
+  unique (organization_id, id),
+
+  constraint ledgers_last_log_seq_nonnegative check (last_log_seq >= 0)
 );
 -- Surrogate ledger ID with a tenant-scoped unique ledger name.
+-- last_log_seq is the per-ledger log counter; only the ledger_logs
+-- trigger below should change it.
 
 
 -- ---------- accounts -----------------------------------------------------
@@ -255,12 +268,14 @@ create table ledger_logs (
   id              bigint generated always as identity primary key,
   organization_id uuidv7 not null,
   ledger_id       uuidv7 not null,
+  seq             bigint not null,
   transaction_id  uuidv7,
   type            text not null,
   payload         json_obj not null,
   created_at      timestamptz not null default now(),
 
   unique (organization_id, ledger_id, id),
+  unique (organization_id, ledger_id, seq),
 
   foreign key (organization_id, ledger_id)
     references ledgers (organization_id, id),
@@ -269,7 +284,10 @@ create table ledger_logs (
     references transactions (organization_id, ledger_id, id),
 
   constraint ledger_logs_type_valid
-    check (type ~ '^[A-Z][A-Z0-9_]{2,63}$')
+    check (type ~ '^[A-Z][A-Z0-9_]{2,63}$'),
+
+  constraint ledger_logs_seq_positive
+    check (seq >= 1)
 );
 -- Authoritative append-only journal, written synchronously.
 -- Example types: TRANSACTION_CREATED, TRANSACTION_REVERTED.
@@ -285,32 +303,32 @@ create table ledger_audit_anchors (
   id                  uuidv7 primary key,
   organization_id     uuidv7 not null,
   ledger_id           uuidv7 not null,
-  from_log_id         bigint not null,
-  to_log_id           bigint not null,
+  from_log_seq         bigint not null,
+  to_log_seq           bigint not null,
   root_hash           sha256_digest not null,
   previous_root_hash  sha256_digest,
   created_at          timestamptz not null default now(),
 
-  unique (organization_id, ledger_id, to_log_id),
+  unique (organization_id, ledger_id, to_log_seq),
 
   foreign key (organization_id, ledger_id)
     references ledgers (organization_id, id),
 
-  foreign key (organization_id, ledger_id, from_log_id)
-    references ledger_logs (organization_id, ledger_id, id),
+  foreign key (organization_id, ledger_id, from_log_seq)
+    references ledger_logs (organization_id, ledger_id, seq),
 
-  foreign key (organization_id, ledger_id, to_log_id)
-    references ledger_logs (organization_id, ledger_id, id),
+  foreign key (organization_id, ledger_id, to_log_seq)
+    references ledger_logs (organization_id, ledger_id, seq),
 
   constraint ledger_audit_anchors_range_valid
-    check (from_log_id <= to_log_id)
+    check (from_log_seq <= to_log_seq)
 );
 -- Asynchronous batch anchors for tamper-evident auditing. Hash lengths are
 -- enforced by the sha256_digest domain (32 bytes each); previous_root_hash
 -- is NULL for the first anchor in a ledger.
 
 create index idx_ledger_audit_anchors_ledger_to_log
-  on ledger_audit_anchors (organization_id, ledger_id, to_log_id desc);
+  on ledger_audit_anchors (organization_id, ledger_id, to_log_seq desc);
 -- Supports finding the latest anchor for a ledger.
 
 
@@ -449,7 +467,8 @@ begin
   from accounts a
   where a.organization_id = new.organization_id
     and a.ledger_id = new.ledger_id
-    and a.address = new.account_address;
+    and a.address = new.account_address
+  for share;
 
   if not found then
     raise exception 'account not found for balance: org=% ledger=% account=%',
@@ -461,6 +480,9 @@ begin
   return new;
 end;
 $$;
+-- FOR SHARE blocks a concurrent flag change on the account until this insert
+-- commits; otherwise the new balance row could keep a stale flag. (The
+-- application role therefore needs UPDATE on accounts, which it has anyway.)
 -- Copies the account's overdraft flag into a balance row. The account is
 -- guaranteed to exist by the balances -> accounts foreign key; the explicit
 -- lookup both materialises the flag and yields a clear error if invariants
@@ -574,6 +596,63 @@ for each row execute function prevent_row_deletion();
 -- Transactions cannot be deleted; corrections must be new transactions.
 
 
+-- ---------- Ledger log sequence ------------------------------------------
+
+create or replace function ledger_logs_assign_seq()
+returns trigger
+language plpgsql
+as $$
+begin
+  -- Bumping the counter takes a row lock on the ledger that is held until
+  -- this transaction ends. Two log writers on one ledger therefore commit in
+  -- seq order, and a rollback also rolls the counter back (no gaps).
+  update ledgers l
+     set last_log_seq = l.last_log_seq + 1
+   where l.organization_id = new.organization_id
+     and l.id = new.ledger_id
+  returning l.last_log_seq into new.seq;
+
+  if not found then
+    raise exception 'ledger not found for log: org=% ledger=%',
+      new.organization_id,
+      new.ledger_id;
+  end if;
+
+  return new;
+end;
+$$;
+-- Assigns ledger_logs.seq. Any value supplied by the client is overwritten,
+-- so every writer gets the same guarantee. NOT NULL is checked after BEFORE
+-- triggers, so callers can simply omit seq.
+
+create trigger ledger_logs_assign_seq_before_insert
+before insert on ledger_logs
+for each row execute function ledger_logs_assign_seq();
+-- Runs before every log insert.
+
+
+-- ---------- TRUNCATE protection ------------------------------------------
+-- Row-level DELETE triggers do NOT fire on TRUNCATE, so each protected table
+-- needs its own statement-level trigger.
+
+create trigger postings_no_truncate
+before truncate on postings
+for each statement execute function prevent_row_mutation();
+
+create trigger ledger_logs_no_truncate
+before truncate on ledger_logs
+for each statement execute function prevent_row_mutation();
+
+create trigger ledger_audit_anchors_no_truncate
+before truncate on ledger_audit_anchors
+for each statement execute function prevent_row_mutation();
+
+create trigger transactions_no_truncate
+before truncate on transactions
+for each statement execute function prevent_row_deletion();
+-- TRUNCATE is blocked on every append-only or delete-protected table.
+
+
 -- ---------- Audit anchor chain enforcement -------------------------------
 
 create or replace function ledger_audit_anchors_enforce_chain()
@@ -581,10 +660,9 @@ returns trigger
 language plpgsql
 as $$
 declare
-  v_lock_key       bigint;
-  v_prev_root_hash bytea;
-  v_prev_to_log_id bigint;
-  v_gap_exists     boolean;
+  v_lock_key         bigint;
+  v_prev_root_hash   bytea;
+  v_prev_to_log_seq  bigint;
 begin
   -- Serialize anchor insertion per ledger. A 64-bit key (hashtextextended)
   -- is used instead of the 32-bit hashtext so that unrelated ledgers are
@@ -596,39 +674,30 @@ begin
   );
   perform pg_advisory_xact_lock(v_lock_key);
 
-  select a.root_hash, a.to_log_id
-    into v_prev_root_hash, v_prev_to_log_id
+  select a.root_hash, a.to_log_seq
+    into v_prev_root_hash, v_prev_to_log_seq
   from ledger_audit_anchors a
   where a.organization_id = new.organization_id
     and a.ledger_id = new.ledger_id
-  order by a.to_log_id desc
+  order by a.to_log_seq desc
   limit 1;
 
   if not found then
     if new.previous_root_hash is not null then
       raise exception 'first audit anchor for ledger must have null previous_root_hash';
     end if;
+    if new.from_log_seq <> 1 then
+      raise exception 'first audit anchor for ledger must start at log seq 1';
+    end if;
   else
     if new.previous_root_hash is distinct from v_prev_root_hash then
       raise exception 'audit anchor previous_root_hash does not match previous anchor';
     end if;
-
-    if new.from_log_id <= v_prev_to_log_id then
-      raise exception 'audit anchor from_log_id must be greater than previous to_log_id';
+    -- ledger_logs.seq is gap-free and follows commit order, so the next
+    -- anchor must start exactly after the previous one. No scan needed.
+    if new.from_log_seq <> v_prev_to_log_seq + 1 then
+      raise exception 'audit anchor from_log_seq must equal previous to_log_seq + 1';
     end if;
-  end if;
-
-  select exists (
-    select 1
-    from ledger_logs l
-    where l.organization_id = new.organization_id
-      and l.ledger_id = new.ledger_id
-      and l.id < new.from_log_id
-      and (v_prev_to_log_id is null or l.id > v_prev_to_log_id)
-  ) into v_gap_exists;
-
-  if v_gap_exists then
-    raise exception 'audit anchor skips ledger logs between previous anchor and from_log_id';
   end if;
 
   return new;
@@ -746,11 +815,11 @@ comment on column ledger_audit_anchors.root_hash is
 comment on column ledger_audit_anchors.previous_root_hash is
   'Root hash of the previous anchor; NULL for the first anchor in a ledger.';
 
-comment on column ledger_audit_anchors.from_log_id is
-  'First ledger_logs.id covered by this anchor (inclusive).';
+comment on column ledger_audit_anchors.from_log_seq is
+  'First ledger_logs.seq covered by this anchor (inclusive).';
 
-comment on column ledger_audit_anchors.to_log_id is
-  'Last ledger_logs.id covered by this anchor (inclusive).';
+comment on column ledger_audit_anchors.to_log_seq is
+  'Last ledger_logs.seq covered by this anchor (inclusive).';
 
 comment on column outbox_events.aggregate_type is
   'Aggregate type name, e.g. transaction, account, ledger.';
