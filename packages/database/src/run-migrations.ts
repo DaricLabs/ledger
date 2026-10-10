@@ -13,7 +13,9 @@ async function main() {
   if (!url) throw new Error('LEDGER_MIGRATOR_DATABASE_URL is required');
 
   const db = new Kysely<unknown>({
-    dialect: new PostgresDialect({ pool: new Pool({ connectionString: url }) }),
+    dialect: new PostgresDialect({
+      pool: new Pool({ connectionString: url, connectionTimeoutMillis: 10_000 }),
+    }),
   });
 
   try {

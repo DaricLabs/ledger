@@ -1,4 +1,4 @@
--- Safe to re-run. Run as admin, connected to the target database.
+-- Safe to re-run. Run as a superuser, connected to the target database.
 
 -- Create each role only if it is missing (roles are server-wide)
 do $$
