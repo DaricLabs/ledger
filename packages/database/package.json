@@ -8,12 +8,18 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "dev": "tsc -p tsconfig.build.json --watch",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "migrate": "node --env-file-if-exists=.env dist/run-migrations.js",
+    "codegen": "kysely-codegen --config-file ./kysely-codegen.config.ts"
   },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./storage": {
+      "types": "./dist/storage.d.ts",
+      "default": "./dist/storage.js"
     }
   },
   "dependencies": {
