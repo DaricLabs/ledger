@@ -601,12 +601,19 @@ for each row execute function prevent_row_deletion();
 create or replace function ledger_logs_assign_seq()
 returns trigger
 language plpgsql
+security definer
+set search_path = pg_catalog, pg_temp
 as $$
 begin
+  -- Runs with the owner's rights (SECURITY DEFINER) so the app role does not
+  -- need UPDATE on ledgers.last_log_seq. The owner bypasses row-level
+  -- security, but a log row for another tenant still fails the policy
+  -- WITH CHECK on ledger_logs, which rolls this update back too.
+  --
   -- Bumping the counter takes a row lock on the ledger that is held until
   -- this transaction ends. Two log writers on one ledger therefore commit in
   -- seq order, and a rollback also rolls the counter back (no gaps).
-  update ledgers l
+  update public.ledgers l
      set last_log_seq = l.last_log_seq + 1
    where l.organization_id = new.organization_id
      and l.id = new.ledger_id
@@ -832,3 +839,42 @@ comment on column idempotency_keys.request_hash is
 
 comment on column idempotency_keys.lock_expires_at is
   'Lease expiry for in-progress operations; NULL once completed.';
+
+
+-- ---------- Runtime role grants ------------------------------------------
+-- ledger_runtime (created by bootstrap) gets the least access the app needs.
+-- Nothing is granted by default. A table without a grant fails with
+-- "permission denied". Every future migration that creates a table must add
+-- its own grants here or in its own file.
+-- UPDATE is limited to columns where possible, so identity columns
+-- (id, organization_id, ...) can never be rewritten by the app.
+
+-- Append-only tables: read and add only. The triggers above are a second lock.
+grant select, insert on postings, ledger_logs, ledger_audit_anchors to ledger_runtime;
+
+-- ledgers: last_log_seq is NOT updatable by the app. Only the SECURITY DEFINER
+-- trigger function ledger_logs_assign_seq changes it.
+grant select, insert on ledgers to ledger_runtime;
+grant update (metadata) on ledgers to ledger_runtime;
+
+-- accounts: the balances trigger uses FOR SHARE, which needs a column UPDATE.
+grant select, insert on accounts to ledger_runtime;
+grant update (metadata, allow_overdraft) on accounts to ledger_runtime;
+
+-- balances: no delete; a balance row is never removed.
+grant select, insert on balances to ledger_runtime;
+grant update (balance, allow_overdraft) on balances to ledger_runtime;
+
+-- transactions: metadata can be edited; revert fields are set when reverting.
+grant select, insert on transactions to ledger_runtime;
+grant update (metadata, reverted_at, reverted_by_transaction_id)
+  on transactions to ledger_runtime;
+
+-- outbox_events: the relay only updates publish status.
+-- No delete yet. Add it when the cleanup job for old published rows is built.
+grant select, insert on outbox_events to ledger_runtime;
+grant update (published_at, publish_attempts, last_error)
+  on outbox_events to ledger_runtime;
+
+-- idempotency_keys: expired keys are cleaned up, so delete is allowed.
+grant select, insert, update, delete on idempotency_keys to ledger_runtime;
