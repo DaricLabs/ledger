@@ -601,12 +601,19 @@ for each row execute function prevent_row_deletion();
 create or replace function ledger_logs_assign_seq()
 returns trigger
 language plpgsql
+security definer
+set search_path = pg_catalog, pg_temp
 as $$
 begin
+  -- Runs with the owner's rights (SECURITY DEFINER) so the app role does not
+  -- need UPDATE on ledgers.last_log_seq. The owner bypasses row-level
+  -- security, but a log row for another tenant still fails the policy
+  -- WITH CHECK on ledger_logs, which rolls this update back too.
+  --
   -- Bumping the counter takes a row lock on the ledger that is held until
   -- this transaction ends. Two log writers on one ledger therefore commit in
   -- seq order, and a rollback also rolls the counter back (no gaps).
-  update ledgers l
+  update public.ledgers l
      set last_log_seq = l.last_log_seq + 1
    where l.organization_id = new.organization_id
      and l.id = new.ledger_id
@@ -845,9 +852,10 @@ comment on column idempotency_keys.lock_expires_at is
 -- Append-only tables: read and add only. The triggers above are a second lock.
 grant select, insert on postings, ledger_logs, ledger_audit_anchors to ledger_runtime;
 
--- ledgers: last_log_seq is bumped by the ledger_logs_assign_seq trigger.
+-- ledgers: last_log_seq is NOT updatable by the app. Only the SECURITY DEFINER
+-- trigger function ledger_logs_assign_seq changes it.
 grant select, insert on ledgers to ledger_runtime;
-grant update (metadata, last_log_seq) on ledgers to ledger_runtime;
+grant update (metadata) on ledgers to ledger_runtime;
 
 -- accounts: the balances trigger uses FOR SHARE, which needs a column UPDATE.
 grant select, insert on accounts to ledger_runtime;
