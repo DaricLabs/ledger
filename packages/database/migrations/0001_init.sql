@@ -832,3 +832,41 @@ comment on column idempotency_keys.request_hash is
 
 comment on column idempotency_keys.lock_expires_at is
   'Lease expiry for in-progress operations; NULL once completed.';
+
+
+-- ---------- Runtime role grants ------------------------------------------
+-- ledger_runtime (created by bootstrap) gets the least access the app needs.
+-- Nothing is granted by default. A table without a grant fails with
+-- "permission denied". Every future migration that creates a table must add
+-- its own grants here or in its own file.
+-- UPDATE is limited to columns where possible, so identity columns
+-- (id, organization_id, ...) can never be rewritten by the app.
+
+-- Append-only tables: read and add only. The triggers above are a second lock.
+grant select, insert on postings, ledger_logs, ledger_audit_anchors to ledger_runtime;
+
+-- ledgers: last_log_seq is bumped by the ledger_logs_assign_seq trigger.
+grant select, insert on ledgers to ledger_runtime;
+grant update (metadata, last_log_seq) on ledgers to ledger_runtime;
+
+-- accounts: the balances trigger uses FOR SHARE, which needs a column UPDATE.
+grant select, insert on accounts to ledger_runtime;
+grant update (metadata, allow_overdraft) on accounts to ledger_runtime;
+
+-- balances: no delete; a balance row is never removed.
+grant select, insert on balances to ledger_runtime;
+grant update (balance, allow_overdraft) on balances to ledger_runtime;
+
+-- transactions: metadata can be edited; revert fields are set when reverting.
+grant select, insert on transactions to ledger_runtime;
+grant update (metadata, reverted_at, reverted_by_transaction_id)
+  on transactions to ledger_runtime;
+
+-- outbox_events: the relay only updates publish status.
+-- No delete yet. Add it when the cleanup job for old published rows is built.
+grant select, insert on outbox_events to ledger_runtime;
+grant update (published_at, publish_attempts, last_error)
+  on outbox_events to ledger_runtime;
+
+-- idempotency_keys: expired keys are cleaned up, so delete is allowed.
+grant select, insert, update, delete on idempotency_keys to ledger_runtime;

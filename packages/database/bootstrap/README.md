@@ -10,12 +10,12 @@ A user with only `CREATEROLE` is not enough. Changing `NOBYPASSRLS` needs a supe
 
 ## Roles it creates
 
-| Role              | Used by                       | Can do                                                                     |
-| ----------------- | ----------------------------- | -------------------------------------------------------------------------- |
-| `ledger_migrator` | `pnpm migrate` only           | Create and change tables (owns them)                                       |
-| `ledger_runtime`  | `ledger-api`, `ledger-worker` | `select`, `insert`, `update`, `delete` on every table the migrator creates |
+| Role              | Used by                       | Can do                                         |
+| ----------------- | ----------------------------- | ---------------------------------------------- |
+| `ledger_migrator` | `pnpm migrate` only           | Create and change tables (owns them)           |
+| `ledger_runtime`  | `ledger-api`, `ledger-worker` | Only what each migration grants it (see below) |
 
-Per-table grants are not done yet. Until then, `ledger_runtime` can change or delete rows in any table, including the ones that should be append-only (for example `ledger_logs` and `postings`).
+Tables are **not** granted automatically. Every migration that creates a table must also `grant` the least access `ledger_runtime` needs (see the end of `0001_init.sql`). A table without a grant fails with `permission denied`, so a missing grant is easy to notice. Append-only tables get `select, insert` only; this protects them even if a trigger is dropped by mistake.
 
 `ledger_runtime` must NOT be superuser or have BYPASSRLS. Row-level security
 (tenant isolation) does not apply to such roles.

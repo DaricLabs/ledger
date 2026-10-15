@@ -21,8 +21,13 @@ grant connect on database :"dbname" to ledger_migrator, ledger_runtime;
 grant usage, create on schema public to ledger_migrator;
 grant usage on schema public to ledger_runtime;
 
--- Tables and sequences the migrator creates later become usable by the app
+-- Tables are NOT granted automatically. Each migration that creates a table
+-- must grant what ledger_runtime needs. A table with no grant fails loudly
+-- with "permission denied". This only affects tables created later. Grants
+-- already on existing tables are not removed (reset a dev database instead).
 alter default privileges for role ledger_migrator in schema public
-  grant select, insert, update, delete on tables to ledger_runtime;
+  revoke all on tables from ledger_runtime;
+
+-- Sequences (identity columns) are safe to share: the app needs them to insert
 alter default privileges for role ledger_migrator in schema public
   grant usage, select on sequences to ledger_runtime;
