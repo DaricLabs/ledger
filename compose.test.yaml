@@ -1,0 +1,44 @@
+name: daric-ledger-test
+
+x-postgres-image: &postgres-image docker.io/library/postgres:18-alpine
+
+services:
+  postgres:
+    image: *postgres-image
+    command: ['postgres', '-c', 'fsync=off'] # faster; safe because data is disposable
+    shm_size: 256mb
+    environment:
+      POSTGRES_USER: postgres # fixed values: local only, deleted after use
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ledger
+      POSTGRES_INITDB_ARGS: '--encoding=UTF-8 --locale=C.UTF-8' # same as dev
+    ports:
+      - '127.0.0.1:5433:5432' # 5433, so it never clashes with the dev database
+    tmpfs:
+      - /var/lib/postgresql # data lives in RAM, lost on stop
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  bootstrap:
+    profiles: [setup]
+    image: *postgres-image
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: postgres
+    volumes:
+      - ./packages/database/bootstrap:/bootstrap:ro,z
+    # Flag/value pairs stay grouped on one line, so Prettier is told to skip this list.
+    # prettier-ignore
+    entrypoint:
+      [
+        'psql', '-h', 'postgres', '-U', 'postgres', '-d', 'ledger',
+        '-v', 'ON_ERROR_STOP=1', '-v', 'dbname=ledger',
+        '-v', 'migrator_password=${LEDGER_MIGRATOR_PASSWORD:-password}',
+        '-v', 'runtime_password=${LEDGER_RUNTIME_PASSWORD:-password}',
+        '-f', '/bootstrap/0001_roles.sql',
+      ]

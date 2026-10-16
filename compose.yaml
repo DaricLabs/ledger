@@ -1,0 +1,53 @@
+name: daric-ledger
+
+# One image for the server and the psql client, so their versions can't drift.
+x-postgres-image: &postgres-image docker.io/library/postgres:18-alpine
+
+services:
+  postgres:
+    image: *postgres-image
+    restart: unless-stopped
+    shm_size: 256mb # default /dev/shm is 64 MB, too small for parallel queries
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ledger
+      # Simple byte-order sorting. Only applied when the volume is first created.
+      POSTGRES_INITDB_ARGS: '--encoding=UTF-8 --locale=C.UTF-8'
+    ports:
+      - '127.0.0.1:${LEDGER_DB_PORT:-5432}:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      # "$$" makes Compose leave the variable for the container shell to expand
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
+
+  # One-shot job that creates the two roles. It needs psql -v variables, so it
+  # cannot be a /docker-entrypoint-initdb.d script.
+  bootstrap:
+    profiles: [setup]
+    image: *postgres-image
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    volumes:
+      - ./packages/database/bootstrap:/bootstrap:ro,z # ":z" = SELinux label (Fedora)
+    # Flag/value pairs stay grouped on one line, so Prettier is told to skip this list.
+    # prettier-ignore
+    entrypoint:
+      [
+        'psql', '-h', 'postgres', '-U', 'postgres', '-d', 'ledger',
+        '-v', 'ON_ERROR_STOP=1', '-v', 'dbname=ledger',
+        '-v', 'migrator_password=${LEDGER_MIGRATOR_PASSWORD:-password}',
+        '-v', 'runtime_password=${LEDGER_RUNTIME_PASSWORD:-password}',
+        '-f', '/bootstrap/0001_roles.sql',
+      ]
+
+volumes:
+  pgdata:
