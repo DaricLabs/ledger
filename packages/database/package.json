@@ -8,7 +8,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "dev": "tsc -p tsconfig.build.json --watch",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integration": "vitest run --config ./vitest.config.integration.ts",
     "migrate": "node --env-file-if-exists=.env dist/run-migrations.js",
     "codegen": "kysely-codegen --config-file ./kysely-codegen.config.ts"
   },
