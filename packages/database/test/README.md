@@ -4,11 +4,11 @@ Only tests for this package live here: the schema (`migrations/`), the roles
 (`bootstrap/`), `withTenant`, and the migration runner. Use cases, repositories
 and HTTP belong to the apps.
 
-| Folder              | Needs a database | Command                  |
-| ------------------- | ---------------- | ------------------------ |
-| `unit/`             | No               | `pnpm test`              |
-| `integration/`      | Yes              | `pnpm test:integration`  |
-| `support/`          | -                | helpers shared by both   |
+| Folder         | Needs a database | Command                 |
+| -------------- | ---------------- | ----------------------- |
+| `unit/`        | No               | `pnpm test`             |
+| `integration/` | Yes              | `pnpm test:integration` |
+| `support/`     | -                | helpers shared by both  |
 
 ## Run the integration tests
 
@@ -19,7 +19,7 @@ From the repo root, once per session:
 # Start Postgres (use "docker compose" if you use Docker)
 podman compose -f compose.test.yaml up -d postgres
 # Create the two roles (ledger_migrator, ledger_runtime)
-podman compose -f compose.test.yaml --profile setup run --rm bootstrap
+podman compose -f compose.test.yaml --profile setup run --rm --no-deps bootstrap
 ```
 
 Then, from `packages/database`:

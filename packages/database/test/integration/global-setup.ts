@@ -8,7 +8,7 @@ Could not prepare the test database. The integration tests need the Postgres
 from compose.test.yaml, with the roles created. From the repo root, run:
 
   podman compose -f compose.test.yaml up -d postgres
-  podman compose -f compose.test.yaml --profile setup run --rm bootstrap
+  podman compose -f compose.test.yaml --profile setup run --rm --no-deps bootstrap
 
 (Use "docker compose" instead of "podman compose" if you use Docker.)
 

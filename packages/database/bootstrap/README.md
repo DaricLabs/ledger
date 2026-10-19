@@ -50,6 +50,12 @@ Running it again fixes role attributes and rotates both passwords.
 If it fails halfway (for example, you ran it as a non-superuser), fix the cause
 and run it again. Nothing needs to be cleaned up first.
 
+## Compose helper
+
+`compose-entrypoint.sh` is used only by the `bootstrap` service in the compose
+files. It waits for Postgres, then runs the SQL file. For real environments,
+use the `psql` command above and skip this script.
+
 ## Check it worked
 
 ```sql
