@@ -42,10 +42,7 @@ services:
     # prettier-ignore
     entrypoint:
       [
-        'sh', '-c',
-        # wait until the server accepts TCP, then replace the shell with psql, which gets the args below
-        'until pg_isready -h postgres -U postgres -d ledger; do sleep 1; done; exec psql "$$@"',
-        '--',
+        'sh', '/bootstrap/compose-entrypoint.sh',
         '-h', 'postgres', '-U', 'postgres', '-d', 'ledger',
         '-v', 'ON_ERROR_STOP=1', '-v', 'dbname=ledger',
         '-v', 'migrator_password=${LEDGER_MIGRATOR_PASSWORD:-password}',
