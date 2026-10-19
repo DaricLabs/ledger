@@ -17,7 +17,7 @@ services:
     tmpfs:
       - /var/lib/postgresql # data lives in RAM, lost on stop
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
       interval: 1s
       timeout: 3s
       retries: 30
@@ -36,7 +36,11 @@ services:
     # prettier-ignore
     entrypoint:
       [
-        'psql', '-h', 'postgres', '-U', 'postgres', '-d', 'ledger',
+        'sh', '-c',
+        # wait until the server accepts TCP, then replace the shell with psql, which gets the args below
+        'until pg_isready -h postgres -U postgres -d ledger; do sleep 1; done; exec psql "$$@"',
+        '--',
+        '-h', 'postgres', '-U', 'postgres', '-d', 'ledger',
         '-v', 'ON_ERROR_STOP=1', '-v', 'dbname=ledger',
         '-v', 'migrator_password=${LEDGER_MIGRATOR_PASSWORD:-password}',
         '-v', 'runtime_password=${LEDGER_RUNTIME_PASSWORD:-password}',
