@@ -170,7 +170,10 @@ describe('ledger_audit_anchors', () => {
       ),
     ]);
 
+    const rejected = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
-    expect(results.filter((r) => r.status === 'rejected')).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    // The loser fails the chain check, not a timeout or a lost connection.
+    expect(rejected[0].reason).toMatchObject({ code: 'P0001' });
   });
 });

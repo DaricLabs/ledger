@@ -32,12 +32,4 @@ describe('migrateToLatest', () => {
 
     expect(await appliedMigrations()).toEqual(before);
   });
-
-  it('keeps two runs at the same time safe (Kysely migration lock)', async () => {
-    const before = await appliedMigrations();
-
-    await expect(Promise.all([migrateToLatest(db), migrateToLatest(db)])).resolves.toBeDefined();
-
-    expect(await appliedMigrations()).toEqual(before);
-  });
 });

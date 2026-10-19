@@ -112,7 +112,16 @@ describe('database roles and grants', () => {
     });
 
     it('lets the migrator create objects in the public schema', async () => {
-      await sql`create temp table migrator_can_create (id int)`.execute(migrator);
+      // Created in `public` on purpose (a temp table would not need CREATE on it),
+      // then rolled back so the table list checked below stays clean.
+      const rollback = new Error('rollback');
+
+      await expect(
+        migrator.transaction().execute(async (trx) => {
+          await sql`create table public.migrator_can_create (id int)`.execute(trx);
+          throw rollback;
+        }),
+      ).rejects.toBe(rollback);
     });
   });
 
