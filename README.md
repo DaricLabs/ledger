@@ -5,6 +5,7 @@
 ![Node.js](https://img.shields.io/badge/Node.js-%20v24-339933?logo=nodedotjs&logoColor=white)
 ![NestJS](https://img.shields.io/badge/NestJS-v12-E0234E?logo=nestjs&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-blue.svg)
+[![CI](https://img.shields.io/github/actions/workflow/status/DaricLabs/ledger/ci.yml?branch=main&label=CI)](https://github.com/DaricLabs/ledger/actions/workflows/ci.yml)
 
 Daric Ledger is an API-first accounting service for recording and tracking the movement of value across ledgers, accounts, and assets.
 
@@ -14,11 +15,11 @@ Designed as an independent microservice within the Daric platform, Daric Ledger 
 
 The current implementation uses PostgreSQL as its transactional datastore and focuses on:
 
-* Tenant-scoped data and isolation
-* Transactional integrity and consistency
-* Immutable, append-only accounting records
-* Reliable event publishing through an outbox pattern
-* Tamper-evident audit anchoring
+- Tenant-scoped data and isolation
+- Transactional integrity and consistency
+- Immutable, append-only accounting records
+- Reliable event publishing through an outbox pattern
+- Tamper-evident audit anchoring
 
 Application-specific concepts such as users, wallets, orders, and payments remain within their respective domains and interact with the ledger through well-defined interfaces.
 
