@@ -20,6 +20,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7 # downloads code into the runner
+        with:
+          persist-credentials: false # don't leave the token in the git config; no step here needs git access
 
       - uses: pnpm/setup@v3 # installs pnpm and Node.js; versions come from package.json
         with:
@@ -45,6 +47,8 @@ jobs:
       LEDGER_RUNTIME_DATABASE_URL: postgres://ledger_runtime:password@127.0.0.1:5433/ledger
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false # don't leave the token in the git config; no step here needs git access
 
       - uses: pnpm/setup@v3 # installs pnpm and Node.js; versions come from package.json
         with:
