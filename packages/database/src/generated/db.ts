@@ -3,13 +3,12 @@
  * Please do not edit it manually.
  */
 
-import type { MoneyColumn } from '../money-column.js';
-import type { ColumnType } from 'kysely';
+import type { MoneyColumn } from "../money-column.js";
+import type { ColumnType } from "kysely";
 
-export type Generated<T> =
-  T extends ColumnType<infer S, infer I, infer U>
-    ? ColumnType<S, I | undefined, U>
-    : ColumnType<T, T | undefined, T>;
+export type Generated<T> = T extends ColumnType<infer S, infer I, infer U>
+  ? ColumnType<S, I | undefined, U>
+  : ColumnType<T, T | undefined, T>;
 
 export type Int8 = ColumnType<string, bigint | number | string, bigint | number | string>;
 
@@ -65,7 +64,7 @@ export interface IdempotencyKeys {
    * Lease expiry for in-progress operations; NULL once completed.
    */
   lock_expires_at: Timestamp | null;
-  method: 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  method: "POST" | "PUT" | "PATCH" | "DELETE";
   /**
    * Stable API operation name, e.g. transactions.create.
    */
@@ -78,7 +77,7 @@ export interface IdempotencyKeys {
   request_hash: Buffer;
   response_body: Json | null;
   response_status: number | null;
-  state: Generated<'in_progress' | 'completed'>;
+  state: Generated<"in_progress" | "completed">;
 }
 
 export interface LedgerAuditAnchors {

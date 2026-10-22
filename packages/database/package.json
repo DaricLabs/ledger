@@ -7,12 +7,14 @@
   "private": true,
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "tsc -p tsconfig.build.json --watch",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "vitest run --config ./vitest.config.integration.ts",
     "migrate": "node --env-file-if-exists=.env dist/run-migrations.js",
-    "codegen": "kysely-codegen --config-file ./kysely-codegen.config.ts"
+    "codegen": "kysely-codegen --config-file ./kysely-codegen.config.ts",
+    "codegen:verify": "kysely-codegen --config-file ./kysely-codegen.config.ts --verify"
   },
   "exports": {
     ".": {
@@ -29,7 +31,7 @@
     "pg": "^8.23.1"
   },
   "devDependencies": {
-    "@types/node": "^26.6.4",
+    "@types/node": "^24.19.2",
     "@types/pg": "^8.23.1",
     "kysely-codegen": "^0.20.0",
     "typescript": "^6.0.3",

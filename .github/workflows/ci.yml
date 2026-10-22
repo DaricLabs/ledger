@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # Fast checks. No database needed.
+  check:
+    name: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7 # downloads code into the runner
+
+      - uses: pnpm/setup@v3 # installs pnpm and Node.js; versions come from package.json
+        with:
+          cache: true # caches the pnpm store
+          install: false # we run install ourselves in the next step
+
+      - run: pnpm install --frozen-lockfile # fails if pnpm-lock.yaml is out of date
+      - run: pnpm build # first, because type-aware lint and typecheck read the built packages
+      - run: pnpm lint # oxlint
+      - run: pnpm format:check # prettier, check only (never writes)
+      - run: pnpm typecheck # tsc --noEmit, also checks test files
+      - run: pnpm test # unit tests only
+
+  # Slower checks. Needs a real Postgres.
+  database:
+    name: database
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Same values as the defaults in compose.test.yaml (port 5433).
+      # Safe to keep in the file: it is a throwaway database that lives only inside this run.
+      LEDGER_MIGRATOR_DATABASE_URL: postgres://ledger_migrator:password@127.0.0.1:5433/ledger
+      LEDGER_RUNTIME_DATABASE_URL: postgres://ledger_runtime:password@127.0.0.1:5433/ledger
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/setup@v3 # installs pnpm and Node.js; versions come from package.json
+        with:
+          cache: true # caches the pnpm store
+          install: false # we run install ourselves in the next step
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Start Postgres
+        run: docker compose -f compose.test.yaml up -d --wait postgres
+
+      - name: Create database roles
+        # Runs `bootstrap/0001_roles.sql` as the superuser
+        run: docker compose -f compose.test.yaml --profile setup run --rm --no-deps bootstrap
+
+      - name: Build database package
+        # "migrate" runs from dist/, so it must be built first
+        run: pnpm --filter @ledger/database build
+
+      - name: Run migrations
+        run: pnpm --filter @ledger/database migrate
+
+      - name: Integration tests
+        run: pnpm test:integration
+
+      - name: E2E tests
+        run: pnpm test:e2e
+
+      - name: Check generated DB types are up to date
+        run: pnpm --filter @ledger/database codegen:verify
+
+      - name: Show Postgres logs
+        if: failure() # only runs when a step above failed
+        run: docker compose -f compose.test.yaml logs postgres

@@ -10,11 +10,23 @@
     "url": "https://github.com/DaricLabs/ledger"
   },
   "scripts": {
+    "build": "pnpm -r --if-present run build",
     "format": "prettier --write \"apps/**/*.{ts,json}\" \"packages/**/*.{ts,json}\"",
-    "lint": "oxlint --type-aware apps/ packages/"
+    "format:check": "prettier --check \"apps/**/*.{ts,json}\" \"packages/**/*.{ts,json}\"",
+    "lint": "oxlint --type-aware apps/ packages/",
+    "typecheck": "pnpm -r --if-present run typecheck",
+    "test": "pnpm -r --if-present run test",
+    "test:integration": "pnpm -r --if-present run test:integration",
+    "test:e2e": "pnpm -r --if-present run test:e2e",
+    "check": "pnpm build && pnpm lint && pnpm format:check && pnpm typecheck && pnpm test"
   },
   "packageManager": "pnpm@12.6.0",
   "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "^24.21.0",
+      "onFail": "download"
+    },
     "packageManager": {
       "name": "pnpm",
       "version": "12.6.0",

@@ -1,0 +1,17 @@
+# Build outputs
+**/dist/
+**/build/
+**/out/
+**/coverage/
+
+# Package manager directories/files
+pnpm-lock.yaml
+**/node_modules/
+
+# Generated directories/files
+**/generated/**
+**/*.generated.ts
+**/*.generated.json
+
+# TypeScript build metadata
+**/*.tsbuildinfo
