@@ -48,6 +48,25 @@ describe('createDb', () => {
     expect(createdPools[0].options).toMatchObject({ max: 3 });
   });
 
+  it('accepts the smallest valid pool size, 1', () => {
+    createDb(URL, { maxConnections: 1, onPoolError: () => undefined });
+
+    expect(createdPools[0].options).toMatchObject({ max: 1 });
+  });
+
+  it.each([
+    ['zero (pg would silently use 10)', 0],
+    ['a negative number (the pool would always look full)', -1],
+    ['a number with decimals', 2.5],
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+  ])('rejects maxConnections that is %s, and creates no pool', (_label, maxConnections) => {
+    expect(() => createDb(URL, { maxConnections, onPoolError: () => undefined })).toThrow(
+      RangeError,
+    );
+    expect(createdPools).toHaveLength(0);
+  });
+
   it('does not connect when it is created (the fake pool has no connect method)', () => {
     expect(() => createDb(URL, { onPoolError: () => undefined })).not.toThrow();
   });

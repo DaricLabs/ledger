@@ -14,6 +14,7 @@ export type LedgerDatabase = Kysely<DB>;
 export interface CreateDbOptions {
   /**
    * Maximum number of connections in the pool. Defaults to 10.
+   * Must be a positive whole number, otherwise `createDb` throws.
    *
    * Keep this value low. Every running instance of a service gets its own
    * pool, so the total is (pool size × number of instances), and it must stay
@@ -61,6 +62,7 @@ export interface CreateDbOptions {
  * @param url - Postgres connection string, usually `LEDGER_RUNTIME_DATABASE_URL`.
  * @param options - Pool size and the idle-connection error handler.
  * @returns A typed Kysely instance. The caller owns it and must destroy it.
+ * @throws {RangeError} If `options.maxConnections` is not a positive whole number.
  *
  * @example
  * const db = createDb(config.databaseUrl, {
@@ -70,9 +72,17 @@ export interface CreateDbOptions {
  * await db.destroy();
  */
 export function createDb(url: string, options: CreateDbOptions): LedgerDatabase {
+  const maxConnections = options.maxConnections ?? 10;
+  // `pg` does not check this value: 0 silently becomes 10, and a negative value
+  // makes the pool think it is always full, so every query waits until it times out.
+  // Fail at startup instead.
+  if (!Number.isSafeInteger(maxConnections) || maxConnections < 1) {
+    throw new RangeError('maxConnections must be a positive integer');
+  }
+
   const pool = new Pool({
     connectionString: url,
-    max: options.maxConnections ?? 10,
+    max: maxConnections,
     connectionTimeoutMillis: 10_000, // fail fast instead of waiting forever for a free connection
   });
 
