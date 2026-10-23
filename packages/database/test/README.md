@@ -1,7 +1,7 @@
 # Tests for `@ledger/database`
 
 Only tests for this package live here: the schema (`migrations/`), the roles
-(`bootstrap/`), `withTenant`, and the migration runner. Use cases, repositories
+(`bootstrap/`), `withTenant`, `createDb`, and the migration runner. Use cases, repositories
 and HTTP belong to the apps.
 
 | Folder         | Needs a database | Command                 |
