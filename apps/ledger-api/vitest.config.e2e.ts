@@ -1,12 +1,17 @@
 import { defineConfig } from 'vitest/config';
-import tsconfigPaths from 'vite-tsconfig-paths';
 
 export default defineConfig({
-  plugins: [tsconfigPaths()],
   test: {
     globals: true,
     root: './',
     include: ['**/*.e2e-spec.ts'],
-    passWithNoTests: true, // Temporary option, remove it when we have tests
+    // AppModule checks the environment when it loads. /health never opens a
+    // connection, so a fake URL is enough here.
+    // Use the real URL if the environment has one (CI sets it, port 5433).
+    env: {
+      LEDGER_RUNTIME_DATABASE_URL:
+        process.env.LEDGER_RUNTIME_DATABASE_URL ??
+        'postgres://ledger_runtime:password@localhost:5433/ledger',
+    },
   },
 });
