@@ -5,9 +5,8 @@ export default defineConfig({
     globals: true,
     root: './',
     include: ['**/*.e2e-spec.ts'],
-    // AppModule checks the environment when it loads. /health never opens a
-    // connection, so a fake URL is enough here.
-    // Use the real URL if the environment has one (CI sets it, port 5433).
+    // The test database must be running (compose.test.yaml, port 5433).
+    // CI sets the URL in ci.yml; locally the default below is used.
     env: {
       LEDGER_RUNTIME_DATABASE_URL:
         process.env.LEDGER_RUNTIME_DATABASE_URL ??
