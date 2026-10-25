@@ -31,7 +31,7 @@ describe('createDb', () => {
     createdPools.length = 0;
   });
 
-  it('builds the pool with the given URL, a default of 10 connections and a 10 second connect timeout', () => {
+  it('builds the pool with the given URL, a default of 10 connections, a 10 second connect timeout and a 10 second query timeout', () => {
     createDb(URL, { onPoolError: () => undefined });
 
     expect(createdPools).toHaveLength(1);
@@ -39,6 +39,8 @@ describe('createDb', () => {
       connectionString: URL,
       max: 10,
       connectionTimeoutMillis: 10_000,
+      statement_timeout: 10_000, // the server cancels a slow query
+      query_timeout: 11_000, // client backstop, 1 second longer
     });
   });
 
@@ -64,6 +66,35 @@ describe('createDb', () => {
     expect(() => createDb(URL, { maxConnections, onPoolError: () => undefined })).toThrow(
       RangeError,
     );
+    expect(createdPools).toHaveLength(0);
+  });
+
+  it('uses queryTimeoutMillis for the server limit, and a client backstop 1 second longer', () => {
+    createDb(URL, { queryTimeoutMillis: 5_000, onPoolError: () => undefined });
+
+    expect(createdPools[0].options).toMatchObject({
+      statement_timeout: 5_000,
+      query_timeout: 6_000,
+    });
+  });
+
+  it('accepts the smallest valid query timeout, 1 millisecond', () => {
+    createDb(URL, { queryTimeoutMillis: 1, onPoolError: () => undefined });
+
+    expect(createdPools[0].options).toMatchObject({ statement_timeout: 1, query_timeout: 1_001 });
+  });
+
+  it.each([
+    ['zero (pg would use no limit)', 0],
+    ['a negative number', -1],
+    ['a number with decimals', 1.5],
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+  ])('rejects queryTimeoutMillis that is %s, and creates no pool', (_label, queryTimeoutMillis) => {
+    const create = () => createDb(URL, { queryTimeoutMillis, onPoolError: () => undefined });
+
+    expect(create).toThrow(RangeError);
+    expect(create).toThrow('queryTimeoutMillis must be a positive integer');
     expect(createdPools).toHaveLength(0);
   });
 

@@ -6,11 +6,12 @@ export default defineConfig({
   test: {
     globals: true,
     root: './',
-    include: ['test/integration/**/*.integration-spec.ts'],
+    include: ['src/**/*.integration-spec.ts'],
     env: {
+      // TEST_ name on purpose: LEDGER_* points at the dev database, tests must never use it.
       LEDGER_RUNTIME_DATABASE_URL:
-        process.env.LEDGER_RUNTIME_DATABASE_URL ??
-        'postgres://ledger_runtime:password@localhost:5433/ledger',
+        process.env.TEST_LEDGER_RUNTIME_DATABASE_URL ??
+        'postgres://ledger_runtime:password@127.0.0.1:5433/ledger',
     },
   },
 });

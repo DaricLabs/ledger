@@ -5,15 +5,20 @@ import type { LedgerDatabase } from './connection.js';
  * Checks what the connected Postgres role is allowed to do, and throws if it
  * could skip row-level security.
  *
- * A superuser and a role with BYPASSRLS both ignore RLS policies, so tenant
- * isolation would silently stop working. The role name in the connection URL
- * is only a hint; this asks Postgres itself.
+ * These roles ignore RLS policies, so tenant isolation would silently stop working:
+ * - a superuser,
+ * - a role with BYPASSRLS,
+ * - an owner of a table that has RLS enabled but not forced (the owner skips
+ *   the policies unless FORCE ROW LEVEL SECURITY is set). Ownership through
+ *   membership of another role counts too. This is the `ledger_migrator` case.
+ *
+ * The role name in the connection URL is only a hint; this asks Postgres itself.
  *
  * Call it once at startup. The error message has the role name only, never
  * the connection URL (it contains the password).
  *
  * @param db - A database client that connects as the runtime role.
- * @throws {Error} If the role is a superuser, has BYPASSRLS, or cannot be read.
+ * @throws {Error} If the role is unsafe (see above) or cannot be read.
  */
 export async function assertSafeRuntimeRole(db: LedgerDatabase): Promise<void> {
   const { rows } = await sql<{ role: string; rolsuper: boolean; rolbypassrls: boolean }>`
@@ -31,5 +36,23 @@ export async function assertSafeRuntimeRole(db: LedgerDatabase): Promise<void> {
   }
   if (row.rolbypassrls) {
     throw new Error(`Database role "${row.role}" must not have BYPASSRLS`);
+  }
+
+  // pg_has_role(..., 'USAGE') is true for the role itself and for owner roles it inherits from.
+  const { rows: ownedRows } = await sql<{ table_name: string }>`
+    select c.oid::regclass::text as table_name
+    from pg_class c
+    where c.relkind in ('r', 'p')
+      and c.relrowsecurity
+      and not c.relforcerowsecurity
+      and pg_has_role(current_user, c.relowner, 'USAGE')
+    limit 1
+  `.execute(db);
+
+  const owned = ownedRows[0];
+  if (owned) {
+    throw new Error(
+      `Database role "${row.role}" owns table ${owned.table_name} with row-level security that is not forced`,
+    );
   }
 }

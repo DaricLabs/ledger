@@ -10,6 +10,15 @@ import type { DB } from './generated/db.js';
  */
 export type LedgerDatabase = Kysely<DB>;
 
+/** How long one query may run, when `queryTimeoutMillis` is not set. */
+const DEFAULT_QUERY_TIMEOUT_MS = 10_000;
+
+/**
+ * The server cancels a slow query first. The client waits this much longer
+ * before it gives up, as a backstop for a server that does not answer at all.
+ */
+const CLIENT_TIMEOUT_MARGIN_MS = 1_000;
+
 /** Options for {@link createDb}. */
 export interface CreateDbOptions {
   /**
@@ -21,6 +30,25 @@ export interface CreateDbOptions {
    * below the `max_connections` limit of Postgres.
    */
   maxConnections?: number;
+
+  /**
+   * Time limit for one query, in milliseconds. Defaults to 10 000.
+   * Must be a positive whole number, otherwise `createDb` throws.
+   *
+   * Without a limit, a query that never finishes (a lock, a stuck server)
+   * makes the code that awaits it wait forever. This includes the role check
+   * at startup.
+   *
+   * The database cancels the query when the limit is reached
+   * (`statement_timeout`), so the connection stays clean and can be reused.
+   * The client gives up 1 second later, in case the database does not answer
+   * at all. The limit applies to each statement, not to a whole transaction.
+   * A worker with long queries should pass a bigger value.
+   *
+   * It is sent as a connection setting, so it does not work behind PgBouncer
+   * in transaction mode unless PgBouncer is told to ignore it.
+   */
+  queryTimeoutMillis?: number;
 
   /**
    * Called when an idle connection in the pool fails (for example when the
@@ -60,9 +88,10 @@ export interface CreateDbOptions {
  *   need other type parameters.
  *
  * @param url - Postgres connection string, usually `LEDGER_RUNTIME_DATABASE_URL`.
- * @param options - Pool size and the idle-connection error handler.
+ * @param options - Pool size, query time limit, and the idle-connection error handler.
  * @returns A typed Kysely instance. The caller owns it and must destroy it.
- * @throws {RangeError} If `options.maxConnections` is not a positive whole number.
+ * @throws {RangeError} If `options.maxConnections` or `options.queryTimeoutMillis`
+ * is not a positive whole number.
  *
  * @example
  * const db = createDb(config.databaseUrl, {
@@ -73,20 +102,28 @@ export interface CreateDbOptions {
  */
 export function createDb(url: string, options: CreateDbOptions): LedgerDatabase {
   const maxConnections = options.maxConnections ?? 10;
-  // `pg` does not check this value: 0 silently becomes 10, and a negative value
-  // makes the pool think it is always full, so every query waits until it times out.
-  // Fail at startup instead.
-  if (!Number.isSafeInteger(maxConnections) || maxConnections < 1) {
-    throw new RangeError('maxConnections must be a positive integer');
-  }
+  const queryTimeoutMillis = options.queryTimeoutMillis ?? DEFAULT_QUERY_TIMEOUT_MS;
+  // `pg` does not check these values: 0 silently becomes 10 connections (or no time
+  // limit), and a negative pool size makes the pool think it is always full, so every
+  // query waits until it times out. Fail at startup instead.
+  assertPositiveInteger('maxConnections', maxConnections);
+  assertPositiveInteger('queryTimeoutMillis', queryTimeoutMillis);
 
   const pool = new Pool({
     connectionString: url,
     max: maxConnections,
     connectionTimeoutMillis: 10_000, // fail fast instead of waiting forever for a free connection
+    statement_timeout: queryTimeoutMillis, // the server cancels a slow query
+    query_timeout: queryTimeoutMillis + CLIENT_TIMEOUT_MARGIN_MS, // client backstop
   });
 
   pool.on('error', options.onPoolError);
 
   return new Kysely<DB>({ dialect: new PostgresDialect({ pool }) });
+}
+
+function assertPositiveInteger(name: string, value: number): void {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new RangeError(`${name} must be a positive integer`);
+  }
 }

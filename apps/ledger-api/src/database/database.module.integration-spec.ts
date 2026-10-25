@@ -1,8 +1,12 @@
 import { ConfigModule } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import type { LedgerDatabase } from '@ledger/database/storage';
-import { KYSELY_DB } from '../../src/database/database.tokens.js';
-import { DatabaseModule } from '../../src/database/database.module.js';
+import { KYSELY_DB } from './database.tokens.js';
+import { DatabaseModule } from './database.module.js';
+
+const superuserUrl =
+  process.env.TEST_LEDGER_SUPERUSER_DATABASE_URL ??
+  'postgres://postgres:postgres@127.0.0.1:5433/ledger';
 
 // A plain ConfigModule (no env schema), so a wrong role can reach the role check.
 const configFor = (url: string) =>
@@ -30,7 +34,7 @@ describe('DatabaseModule', () => {
 
   it('refuses to start when connected as a superuser', async () => {
     const moduleRef = await Test.createTestingModule({
-      imports: [configFor('postgres://postgres:postgres@127.0.0.1:5433/ledger'), DatabaseModule],
+      imports: [configFor(superuserUrl), DatabaseModule],
     }).compile();
     const app = moduleRef.createNestApplication();
 

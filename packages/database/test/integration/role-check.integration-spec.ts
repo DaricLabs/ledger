@@ -1,14 +1,8 @@
-import { createDb } from '../../src/connection.js';
-import { assertSafeRuntimeRole } from '../../src/role-check.js';
-
-// Same defaults as compose.test.yaml (port 5433).
-const runtimeUrl =
-  process.env.LEDGER_RUNTIME_DATABASE_URL ??
-  'postgres://ledger_runtime:password@127.0.0.1:5433/ledger';
-const superuserUrl = 'postgres://postgres:postgres@127.0.0.1:5433/ledger';
+import { assertSafeRuntimeRole, createDb, type LedgerDatabase } from '../../src/storage.js';
+import { testDatabaseUrls } from '../support/config.js';
 
 /** Runs `fn` with a short-lived client and always closes its pool. */
-async function withDb(url: string, fn: (db: ReturnType<typeof createDb>) => Promise<void>) {
+async function withDb(url: string, fn: (db: LedgerDatabase) => Promise<void>) {
   const db = createDb(url, { maxConnections: 1, onPoolError: () => undefined });
   try {
     await fn(db);
@@ -19,15 +13,25 @@ async function withDb(url: string, fn: (db: ReturnType<typeof createDb>) => Prom
 
 describe('assertSafeRuntimeRole', () => {
   it('accepts the ledger_runtime role', async () => {
-    await withDb(runtimeUrl, async (db) => {
+    await withDb(testDatabaseUrls.runtime, async (db) => {
       await expect(assertSafeRuntimeRole(db)).resolves.toBeUndefined();
     });
   });
 
   it('rejects a superuser', async () => {
-    await withDb(superuserUrl, async (db) => {
+    await withDb(testDatabaseUrls.superuser, async (db) => {
       await expect(assertSafeRuntimeRole(db)).rejects.toThrow(
         'Database role "postgres" must not be a superuser',
+      );
+    });
+  });
+
+  // The migrator owns the tenant tables, and RLS is enabled but not forced on them,
+  // so it skips the policies even though it has no superuser or BYPASSRLS flag.
+  it('rejects a role that owns a table with RLS enabled but not forced', async () => {
+    await withDb(testDatabaseUrls.migrator, async (db) => {
+      await expect(assertSafeRuntimeRole(db)).rejects.toThrow(
+        /Database role "ledger_migrator" owns table .* not forced/,
       );
     });
   });
