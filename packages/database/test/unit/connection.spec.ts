@@ -111,4 +111,42 @@ describe('createDb', () => {
 
     expect(onPoolError).toHaveBeenCalledExactlyOnceWith(failure);
   });
+
+  it.each(['statement_timeout', 'query_timeout'])(
+    'rejects a URL that sets %s, and creates no pool',
+    (param) => {
+      const create = () => createDb(`${URL}?${param}=0`, { onPoolError: () => undefined });
+
+      expect(create).toThrow(`Remove "${param}" from the database URL`);
+      expect(createdPools).toHaveLength(0);
+    },
+  );
+
+  it('accepts other URL parameters', () => {
+    createDb(`${URL}?sslmode=require&application_name=ledger-api`, {
+      onPoolError: () => undefined,
+    });
+
+    expect(createdPools).toHaveLength(1);
+  });
+
+  // Node.js turns a timer above 2_147_483_647 ms into a 1 ms timer. query_timeout is
+  // queryTimeoutMillis + 1000, so the biggest allowed value is 1000 below that.
+  it('accepts the biggest query timeout whose client backstop still fits a Node.js timer', () => {
+    createDb(URL, { queryTimeoutMillis: 2_147_482_647, onPoolError: () => undefined });
+
+    expect(createdPools[0].options).toMatchObject({
+      statement_timeout: 2_147_482_647,
+      query_timeout: 2_147_483_647,
+    });
+  });
+
+  it('rejects a query timeout one above that, and creates no pool', () => {
+    const create = () =>
+      createDb(URL, { queryTimeoutMillis: 2_147_482_648, onPoolError: () => undefined });
+
+    expect(create).toThrow(RangeError);
+    expect(create).toThrow('queryTimeoutMillis must not be more than');
+    expect(createdPools).toHaveLength(0);
+  });
 });
