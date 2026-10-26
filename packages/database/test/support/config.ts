@@ -4,6 +4,8 @@
  * Defaults match `compose.test.yaml` (port 5433, default passwords). The env
  * variable names start with `TEST_` on purpose: the normal `LEDGER_*` names
  * point at the dev database (`.env`), and tests must never run against it.
+ * `superuser` is used to check that the app refuses superuser roles, and to create
+ * a temporary role in the SET ROLE test.
  */
 export const testDatabaseUrls = {
   migrator:
@@ -12,4 +14,7 @@ export const testDatabaseUrls = {
   runtime:
     process.env.TEST_LEDGER_RUNTIME_DATABASE_URL ??
     'postgres://ledger_runtime:password@127.0.0.1:5433/ledger',
+  superuser:
+    process.env.TEST_LEDGER_SUPERUSER_DATABASE_URL ??
+    'postgres://postgres:postgres@127.0.0.1:5433/ledger',
 } as const;

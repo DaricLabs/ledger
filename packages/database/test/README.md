@@ -39,9 +39,10 @@ owner, to check that triggers stop even the owner.
   Recreate it with `compose down` and the two commands above.
 - **Tests never clean up.** Each test uses new random tenant ids, so data does not
   clash. The database is meant to be thrown away.
-- **Another database:** set `TEST_LEDGER_MIGRATOR_DATABASE_URL` and
-  `TEST_LEDGER_RUNTIME_DATABASE_URL`. These names differ from the `LEDGER_*` ones on
-  purpose, so tests never run against your dev database by accident.
+- **Another database:** set `TEST_LEDGER_MIGRATOR_DATABASE_URL`,
+  `TEST_LEDGER_RUNTIME_DATABASE_URL`, and `TEST_LEDGER_SUPERUSER_DATABASE_URL`.
+  These names differ from the `LEDGER_*` ones on purpose, so tests never run
+  against your dev database by accident.
 - **New table?** `roles.integration-spec.ts` and `row-level-security.integration-spec.ts`
   fail until you add it to their lists. That is on purpose: every grant and every
   policy should be a conscious decision.

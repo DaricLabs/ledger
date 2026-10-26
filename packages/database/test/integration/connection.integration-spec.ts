@@ -72,6 +72,26 @@ describe('createDb', () => {
     }
   });
 
+  it('cancels a query that runs longer than queryTimeoutMillis, and the same connection works afterwards', async () => {
+    // One connection only, so the second query must reuse the same connection.
+    const limited = createDb(testDatabaseUrls.runtime, {
+      maxConnections: 1,
+      queryTimeoutMillis: 300,
+      onPoolError: () => undefined,
+    });
+    try {
+      // 57014 = the database itself cancelled the query (statement_timeout).
+      await expect(sql`select pg_sleep(5)`.execute(limited)).rejects.toMatchObject({
+        code: '57014',
+      });
+
+      const { rows } = await sql<{ ok: number }>`select 1 as ok`.execute(limited);
+      expect(rows).toEqual([{ ok: 1 }]);
+    } finally {
+      await limited.destroy(); // always close the pool, even if the test fails
+    }
+  });
+
   it('refuses new queries after destroy()', async () => {
     const short = createDb(testDatabaseUrls.runtime, {
       maxConnections: 1,
