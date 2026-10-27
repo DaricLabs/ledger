@@ -1,12 +1,18 @@
+import { LOG_LEVELS } from '../logging/log-levels.js';
 import { envSchema } from './env.schema.js';
 
 const databaseUrl = 'postgres://ledger_runtime:secret-pass@localhost:5432/ledger';
 
 describe('envSchema', () => {
-  it('accepts a valid environment and uses port 3000 by default', () => {
+  it('accepts a valid environment and uses the defaults', () => {
     const env = envSchema.parse({ LEDGER_RUNTIME_DATABASE_URL: databaseUrl });
 
-    expect(env).toEqual({ PORT: 3000, LEDGER_RUNTIME_DATABASE_URL: databaseUrl });
+    expect(env).toEqual({
+      PORT: 3000,
+      LEDGER_RUNTIME_DATABASE_URL: databaseUrl,
+      LOG_LEVEL: 'info',
+      LOG_PRETTY: false,
+    });
   });
 
   it('accepts the postgresql:// scheme', () => {
@@ -62,5 +68,47 @@ describe('envSchema', () => {
     const result = envSchema.safeParse({ LEDGER_RUNTIME_DATABASE_URL: databaseUrl, PORT: port });
 
     expect(result.success).toBe(false);
+  });
+
+  describe('LOG_LEVEL', () => {
+    // runs once per allowed level
+    it.each(LOG_LEVELS)('accepts %s', (level) => {
+      const env = envSchema.parse({ LEDGER_RUNTIME_DATABASE_URL: databaseUrl, LOG_LEVEL: level });
+
+      expect(env.LOG_LEVEL).toBe(level);
+    });
+
+    // wrong case and empty text must fail, like your PORT='' test
+    it.each(['verbose', 'INFO', ''])('rejects %j', (level) => {
+      const result = envSchema.safeParse({
+        LEDGER_RUNTIME_DATABASE_URL: databaseUrl,
+        LOG_LEVEL: level,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error?.issues[0]?.path).toEqual(['LOG_LEVEL']);
+    });
+  });
+
+  describe('LOG_PRETTY', () => {
+    it.each([
+      ['true', true],
+      ['false', false],
+    ])('turns %j into %s', (text, expected) => {
+      const env = envSchema.parse({ LEDGER_RUNTIME_DATABASE_URL: databaseUrl, LOG_PRETTY: text });
+
+      expect(env.LOG_PRETTY).toBe(expected);
+    });
+
+    // only the exact words "true" and "false" are allowed
+    it.each(['1', 'yes', 'TRUE', ''])('rejects %j', (text) => {
+      const result = envSchema.safeParse({
+        LEDGER_RUNTIME_DATABASE_URL: databaseUrl,
+        LOG_PRETTY: text,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error?.issues[0]?.path).toEqual(['LOG_PRETTY']);
+    });
   });
 });
