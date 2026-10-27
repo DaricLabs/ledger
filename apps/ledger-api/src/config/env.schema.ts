@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { LOG_LEVELS } from '../logging/log-levels.js';
 
 // The only role the API may use. `ledger_migrator` owns the tables and
 // skips row-level security, so using it would silently turn tenant isolation off.
@@ -17,10 +18,15 @@ export const envSchema = z.object({
   // using the migrator URL. The message must never contain the URL (it has the password).
   LEDGER_RUNTIME_DATABASE_URL: z
     .url({ protocol: /^postgres(ql)?$/ })
-    // An unparsable URL is already reported by `.url()`, so skip it here.
     .refine((value) => !URL.canParse(value) || new URL(value).username === RUNTIME_ROLE, {
       error: `must connect as the ${RUNTIME_ROLE} role`,
     }),
+
+  LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
+  LOG_PRETTY: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
 });
 
 /** Validated shape of the environment, for `ConfigService<Env, true>`. */

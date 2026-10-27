@@ -6,7 +6,6 @@ import type { LedgerDatabase } from '@ledger/database/storage';
 import type { Env } from '../config/env.schema.js';
 import { KYSELY_DB } from './database.tokens.js';
 
-// TODO(logger): revisit when the logging decision is made
 const logger = new Logger('Database');
 
 @Module({
