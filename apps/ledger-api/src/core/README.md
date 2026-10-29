@@ -5,13 +5,15 @@ accounts or transactions. Business features live next to this folder in `src/`.
 
 ## What is inside
 
-| Folder      | Job                                                   |
-| :---------- | :---------------------------------------------------- |
-| `config/`   | Reads and checks environment variables at startup     |
-| `database/` | Creates the database pool and checks the runtime role |
-| `health/`   | Liveness endpoint                                     |
-| `logging/`  | Pino setup, request ids, log levels                   |
-| `tenant/`   | `TenantGuard` and `@OrganizationId()`                 |
+| Folder        | Job                                                        |
+| :------------ | :--------------------------------------------------------- |
+| `config/`     | Reads and checks environment variables at startup          |
+| `database/`   | Creates the database pool and checks the runtime role      |
+| `errors/`     | The one error body, the global error filter, error logging |
+| `health/`     | Liveness endpoint                                          |
+| `logging/`    | Pino setup, request ids, log levels                        |
+| `tenant/`     | `TenantGuard` and `@OrganizationId()`                      |
+| `validation/` | Global schema pipe, so `@Body({ schema })` works           |
 
 ## Rules
 

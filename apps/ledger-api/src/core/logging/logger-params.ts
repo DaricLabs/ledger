@@ -1,9 +1,27 @@
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Params } from 'nestjs-pino';
 import type { LogLevel } from './log-levels.js';
 import { resolveRequestId } from './request-id.js';
 
 /** Probes call this often. Logging it would only add noise. */
 const HEALTH_PATH = '/health';
+
+/**
+ * pino-http logs every request at `info` unless told otherwise, so a 500
+ * would never show up as an error. The level follows the status code, or an
+ * error on the response stream (a socket failure after the status was sent).
+ * That error is the third argument. It is not the `res.err` that
+ * `LoggerErrorInterceptor` sets, and those errors always have a 4xx or 5xx status.
+ */
+export function levelForResponse(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  err?: Error,
+): LogLevel {
+  if (res.statusCode >= 400 && res.statusCode < 500) return 'warn';
+  if (res.statusCode >= 500 || err) return 'error';
+  return 'info';
+}
 
 export interface LoggerParamsOptions {
   /** Added to every log line as `service`. */
@@ -31,6 +49,7 @@ export function buildLoggerParams(options: LoggerParamsOptions): Params {
       censor: '[REDACTED]',
     },
     genReqId: resolveRequestId,
+    customLogLevel: levelForResponse,
     autoLogging: { ignore: (req: { url?: string }) => req.url === HEALTH_PATH },
     ...(options.pretty ? { transport: { target: 'pino-pretty' } } : {}),
   };
