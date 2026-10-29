@@ -61,6 +61,13 @@ describe('toErrorResponse', () => {
     });
   });
 
+  it('turns an HttpException with a status below 400 into a plain 500', () => {
+    expect(toErrorResponse(new HttpException('moved', 302))).toEqual({
+      status: 500,
+      body: { errorCode: 'INTERNAL', errorMessage: 'Internal server error' },
+    });
+  });
+
   it.each([
     ['an Error', new Error('connect ECONNREFUSED 10.0.0.5:5432')],
     ['a string', 'boom'],

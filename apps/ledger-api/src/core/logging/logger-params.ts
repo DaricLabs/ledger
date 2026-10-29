@@ -8,11 +8,18 @@ const HEALTH_PATH = '/health';
 
 /**
  * pino-http logs every request at `info` unless told otherwise, so a 500
- * would never show up as an error. Level follows the status code.
+ * would never show up as an error. The level follows the status code, or an
+ * error on the response stream (a socket failure after the status was sent).
+ * That error is the third argument. It is not the `res.err` that
+ * `LoggerErrorInterceptor` sets, and those errors always have a 4xx or 5xx status.
  */
-function levelForResponse(_req: IncomingMessage, res: ServerResponse): LogLevel {
-  if (res.statusCode >= 500) return 'error';
-  if (res.statusCode >= 400) return 'warn';
+export function levelForResponse(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  err?: Error,
+): LogLevel {
+  if (res.statusCode >= 400 && res.statusCode < 500) return 'warn';
+  if (res.statusCode >= 500 || err) return 'error';
   return 'info';
 }
 

@@ -41,7 +41,10 @@ export function toErrorResponse(exception: unknown): { status: number; body: Err
     };
   }
 
-  const serverStatus = exception instanceof HttpException ? exception.getStatus() : 500;
+  // Only a real 5xx keeps its status. Anything else (an unknown error, or an
+  // HttpException with a status below 400) is a plain 500, so status and body agree.
+  const thrownStatus = exception instanceof HttpException ? exception.getStatus() : 500;
+  const serverStatus = thrownStatus >= 500 ? thrownStatus : 500;
   const errorCode = codeForStatus(serverStatus);
   return {
     status: serverStatus,
