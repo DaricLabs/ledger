@@ -48,6 +48,16 @@ describe('Ledger.create', () => {
     expect(() => Ledger.create(props({ name }))).toThrow(InvalidLedgerNameError);
   });
 
+  it.each([
+    ['undefined', undefined],
+    ['null', null],
+    ['a number', 123],
+  ])('rejects a name that is %s, not a string', (_label, name) => {
+    expect(() => Ledger.create(props({ name: name as unknown as string }))).toThrow(
+      InvalidLedgerNameError,
+    );
+  });
+
   it.each([...RESERVED_LEDGER_NAMES])('rejects the reserved name %j', (name) => {
     expect(() => Ledger.create(props({ name }))).toThrow(
       new InvalidLedgerNameError(`Ledger name "${name}" is reserved`),

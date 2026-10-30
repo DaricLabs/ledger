@@ -96,8 +96,10 @@ function snapshot(props: LedgerProps): Readonly<LedgerProps> {
   });
 }
 
-function assertValidName(name: string): void {
-  if (!LEDGER_NAME_PATTERN.test(name)) {
+// The parameter is `unknown` on purpose: `RegExp.test` turns its input into a
+// string, so `undefined` would become "undefined" and pass the pattern.
+function assertValidName(name: unknown): void {
+  if (typeof name !== 'string' || !LEDGER_NAME_PATTERN.test(name)) {
     throw new InvalidLedgerNameError(
       'Ledger name must be 1 to 63 characters: lowercase letters, digits, "_" or "-", and it must start with a letter or digit',
     );
