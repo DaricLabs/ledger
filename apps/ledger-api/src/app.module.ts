@@ -6,6 +6,7 @@ import { ErrorsModule } from './core/errors/errors.module.js';
 import { LoggingModule } from './core/logging/logging.module.js';
 import { HealthModule } from './core/health/health.module.js';
 import { ValidationModule } from './core/validation/validation.module.js';
+import { LedgersModule } from './ledgers/ledgers.module.js';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { ValidationModule } from './core/validation/validation.module.js';
     ValidationModule,
     DatabaseModule,
     HealthModule,
+    LedgersModule,
   ],
 })
 export class AppModule {}
