@@ -31,7 +31,8 @@ accounts or transactions. Business features live next to this folder in `src/`.
    arguments.
 6. **Feature errors stay in the feature.** The global error filter only knows
    `HttpException` and unknown errors. Mapping a domain error to HTTP happens
-   in the feature's `presentation/` folder.
+   in the feature's `presentation/` folder. To send a domain code, pass it as
+   the `errorCode` option: `new NotFoundException(msg, { errorCode: 'X' })`.
 7. **Add a `*.module.ts` only when DI needs it.**
 
 ## Where does new code go?
