@@ -1,5 +1,3 @@
-import type { ErrorCode } from './error-code.js';
-
 /** One invalid field in a `VALIDATION` error. `path` is dotted, like `postings.0.amount`. */
 export interface ErrorDetail {
   path: string;
@@ -10,10 +8,12 @@ export interface ErrorDetail {
  * The body of every error response. Same field names as Formance
  * (`errorCode`, `errorMessage`), so Formance-style clients feel familiar.
  *
+ * `errorCode` is one of the core codes in `ERROR_CODES`, or a domain code
+ * from a feature, like `LEDGER_NOT_FOUND`.
  * `details` is only sent for `VALIDATION` errors.
  */
 export interface ErrorResponse {
-  errorCode: ErrorCode;
+  errorCode: string;
   errorMessage: string;
   details?: ErrorDetail[];
 }

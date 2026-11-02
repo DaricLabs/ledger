@@ -35,10 +35,10 @@ export function toErrorResponse(exception: unknown): { status: number; body: Err
 
   const status = readClientStatus(exception);
   if (status !== undefined) {
-    return {
-      status,
-      body: { errorCode: codeForStatus(status), errorMessage: (exception as Error).message },
-    };
+    // An HttpException can carry its own code (`{ errorCode }` option). Else use the status.
+    const ownCode = exception instanceof HttpException ? exception.errorCode : undefined;
+    const errorCode = ownCode ?? codeForStatus(status);
+    return { status, body: { errorCode, errorMessage: (exception as Error).message } };
   }
 
   // Only a real 5xx keeps its status. Anything else (an unknown error, or an

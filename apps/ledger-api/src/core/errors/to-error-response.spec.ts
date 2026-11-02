@@ -34,6 +34,26 @@ describe('toErrorResponse', () => {
     });
   });
 
+  it('uses the errorCode option of an HttpException and keeps its message', () => {
+    const error = new NotFoundException('Ledger "main" not found', {
+      errorCode: 'LEDGER_NOT_FOUND',
+    });
+
+    expect(toErrorResponse(error)).toEqual({
+      status: 404,
+      body: { errorCode: 'LEDGER_NOT_FOUND', errorMessage: 'Ledger "main" not found' },
+    });
+  });
+
+  it('hides the errorCode option and the message of a 5xx HttpException', () => {
+    const error = new HttpException('db host=10.0.0.5', 500, { errorCode: 'LEDGER_BROKEN' });
+
+    expect(toErrorResponse(error)).toEqual({
+      status: 500,
+      body: { errorCode: 'INTERNAL', errorMessage: 'Internal server error' },
+    });
+  });
+
   it('maps an http-errors client error from the body parser (invalid JSON)', () => {
     const error = Object.assign(new Error('Unexpected token } in JSON'), {
       status: 400,

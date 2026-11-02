@@ -28,6 +28,11 @@ class ProbeController {
     throw new NotFoundException('Ledger not found');
   }
 
+  @Get('domain-error')
+  domainError() {
+    throw new NotFoundException('Ledger not found', { errorCode: 'LEDGER_NOT_FOUND' });
+  }
+
   @Get('boom')
   boom() {
     throw new Error('connect ECONNREFUSED 10.0.0.5:5432 password=hunter2');
@@ -99,6 +104,16 @@ describe('error responses (real Nest app)', () => {
 
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ errorCode: 'NOT_FOUND', errorMessage: 'Ledger not found' });
+  });
+
+  it('returns the domain errorCode set on an HttpException', async () => {
+    const res = await fetch(`${baseUrl}/domain-error`);
+
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({
+      errorCode: 'LEDGER_NOT_FOUND',
+      errorMessage: 'Ledger not found',
+    });
   });
 
   it('formats the unknown route 404 of Nest', async () => {
