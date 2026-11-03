@@ -277,6 +277,15 @@ importers:
         specifier: ^5.0.3
         version: 5.0.3(@types/node@24.19.2)(vite@8.3.0(@types/node@24.19.2))
 
+  packages/domain:
+    devDependencies:
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: ^5.0.3
+        version: 5.0.3(@types/node@24.19.2)(vite@8.3.0(@types/node@24.19.2))
+
 packages:
 
   '@angular-devkit/core@22.1.8':
