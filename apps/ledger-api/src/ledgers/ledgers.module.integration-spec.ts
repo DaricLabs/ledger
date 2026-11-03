@@ -1,5 +1,6 @@
 import { ConfigModule } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
+import { LoggerModule } from 'nestjs-pino';
 import type { INestApplication } from '@nestjs/common';
 import { unwrapTenantTransaction, withTenant, type LedgerDatabase } from '@ledger/database/storage';
 import { KYSELY_DB } from '../core/database/database.tokens.js';
@@ -23,6 +24,8 @@ async function buildApp(
         ignoreEnvFile: true,
         load: [() => ({ LEDGER_RUNTIME_DATABASE_URL: process.env.LEDGER_RUNTIME_DATABASE_URL })],
       }),
+      // The controller uses TenantGuard, and the guard needs PinoLogger.
+      LoggerModule.forRoot({ pinoHttp: { level: 'silent' } }),
       LedgersModule,
     ],
   });

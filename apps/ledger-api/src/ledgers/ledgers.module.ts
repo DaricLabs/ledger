@@ -11,9 +11,11 @@ import { KyselyLedgerRepository } from './infrastructure/kysely-ledger.repositor
 import { KyselyOutboxWriter } from './infrastructure/kysely-outbox-writer.js';
 import { KyselyTenantTransactionRunner } from './infrastructure/kysely-tenant-transaction-runner.js';
 import { Uuidv7IdGenerator } from './infrastructure/uuidv7-id-generator.js';
+import { LedgersController } from './presentation/ledgers.controller.js';
 
 @Module({
   imports: [DatabaseModule],
+  controllers: [LedgersController],
   providers: [
     { provide: ID_GENERATOR, useClass: Uuidv7IdGenerator },
     { provide: TENANT_TRANSACTION_RUNNER, useClass: KyselyTenantTransactionRunner },

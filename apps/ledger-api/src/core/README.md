@@ -33,6 +33,9 @@ accounts or transactions. Business features live next to this folder in `src/`.
    `HttpException` and unknown errors. Mapping a domain error to HTTP happens
    in the feature's `presentation/` folder. To send a domain code, pass it as
    the `errorCode` option: `new NotFoundException(msg, { errorCode: 'X' })`.
+   Domain errors extend `DomainError` from `@ledger/domain`, which already
+   carries a `code`: use it as the `errorCode`, and decide only the HTTP
+   status in `presentation/`.
 7. **Add a `*.module.ts` only when DI needs it.**
 
 ## Where does new code go?
