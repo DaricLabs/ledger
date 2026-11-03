@@ -64,9 +64,11 @@ jobs:
         # Runs `bootstrap/0001_roles.sql` as the superuser
         run: docker compose -f compose.test.yaml --profile setup run --rm --no-deps bootstrap
 
-      - name: Build database package
-        # "migrate" runs from dist/, so it must be built first
-        run: pnpm --filter @ledger/database build
+      - name: Build shared packages
+        # Apps read packages from dist/ (see "exports" in each package.json),
+        # and "migrate" runs from dist/, so build them all first.
+        # The glob also covers packages that will be added later.
+        run: pnpm --filter "./packages/*" build
 
       - name: Run migrations
         run: pnpm --filter @ledger/database migrate
