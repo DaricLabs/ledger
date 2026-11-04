@@ -3,6 +3,7 @@ import { InvalidLedgerMetadataError } from '../domain/invalid-ledger-metadata.er
 import { InvalidLedgerNameError } from '../domain/invalid-ledger-name.error.js';
 import { LedgerAlreadyExistsError } from '../domain/ledger-already-exists.error.js';
 import type { LedgerDomainError } from '../domain/ledger-domain.error.js';
+import { LedgerNotFoundError } from '../domain/ledger-not-found.error.js';
 
 /**
  * Maps a ledger domain error to the HTTP exception that the global error
@@ -18,6 +19,9 @@ export function toLedgerHttpException(error: LedgerDomainError): HttpException {
 }
 
 function statusOf(error: LedgerDomainError): HttpStatus {
+  if (error instanceof LedgerNotFoundError) {
+    return HttpStatus.NOT_FOUND;
+  }
   if (error instanceof LedgerAlreadyExistsError) {
     return HttpStatus.CONFLICT;
   }

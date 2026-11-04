@@ -30,6 +30,8 @@ function setup() {
     insert: vi.fn<ILedgerRepository['insert']>(async () => {
       calls.push('ledger');
     }),
+    // Creating a ledger never reads one.
+    findByName: vi.fn<ILedgerRepository['findByName']>(),
   };
   const logs = {
     append: vi.fn<ILedgerLogWriter['append']>(async () => {

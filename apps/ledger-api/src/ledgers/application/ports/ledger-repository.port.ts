@@ -10,6 +10,14 @@ export interface ILedgerRepository {
    * with this name.
    */
   insert(trx: TenantTransaction, ledger: Ledger): Promise<void>;
+
+  /**
+   * Loads the ledger with this name, from the organization of the transaction.
+   *
+   * @returns `null` when there is no such ledger. A ledger of another
+   * organization counts as "no such ledger".
+   */
+  findByName(trx: TenantTransaction, name: string): Promise<Ledger | null>;
 }
 
 /** Nest DI token for {@link ILedgerRepository}. */

@@ -6,7 +6,7 @@ import type { App } from 'supertest/types.js';
 import { AppModule } from '../src/app.module.js';
 import { ORGANIZATION_ID_HEADER } from '../src/core/tenant/tenant.guard.js';
 
-describe('POST /ledgers (e2e)', () => {
+describe('ledgers (e2e)', () => {
   let app: INestApplication<App>;
 
   beforeAll(async () => {
@@ -26,6 +26,11 @@ describe('POST /ledgers (e2e)', () => {
       .post('/ledgers')
       .set(ORGANIZATION_ID_HEADER, organizationId)
       .send(body);
+
+  const getLedger = (organizationId: string, name: string) =>
+    request(app.getHttpServer())
+      .get(`/ledgers/${name}`)
+      .set(ORGANIZATION_ID_HEADER, organizationId);
 
   it('creates a ledger', async () => {
     const res = await createLedger(randomUUIDv7(), {
@@ -65,6 +70,43 @@ describe('POST /ledgers (e2e)', () => {
 
   it('returns 400 VALIDATION for a bad body', async () => {
     const res = await createLedger(randomUUIDv7(), { name: 'Not Valid' }).expect(400);
+
+    expect(res.body.errorCode).toBe('VALIDATION');
+  });
+
+  it('sends the URL of the new ledger, and that URL returns the ledger', async () => {
+    const organizationId = randomUUIDv7();
+
+    const created = await createLedger(organizationId, {
+      name: 'main',
+      metadata: { env: 'test' },
+    }).expect(201);
+    expect(created.headers.location).toBe('/ledgers/main');
+
+    const fetched = await request(app.getHttpServer())
+      .get(created.headers.location as string)
+      .set(ORGANIZATION_ID_HEADER, organizationId)
+      .expect(200);
+
+    expect(fetched.body).toEqual(created.body);
+  });
+
+  it('returns 404 LEDGER_NOT_FOUND for a name the organization does not have', async () => {
+    const res = await getLedger(randomUUIDv7(), 'missing').expect(404);
+
+    expect(res.body.errorCode).toBe('LEDGER_NOT_FOUND');
+  });
+
+  it('returns 404 LEDGER_NOT_FOUND for the ledger of another organization', async () => {
+    await createLedger(randomUUIDv7(), { name: 'main' }).expect(201);
+
+    const res = await getLedger(randomUUIDv7(), 'main').expect(404);
+
+    expect(res.body.errorCode).toBe('LEDGER_NOT_FOUND');
+  });
+
+  it('returns 400 VALIDATION for a name with a wrong shape', async () => {
+    const res = await getLedger(randomUUIDv7(), 'Not-Valid').expect(400);
 
     expect(res.body.errorCode).toBe('VALIDATION');
   });
