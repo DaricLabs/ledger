@@ -32,6 +32,11 @@ describe('ledgers (e2e)', () => {
       .get(`/ledgers/${name}`)
       .set(ORGANIZATION_ID_HEADER, organizationId);
 
+  const listLedgers = (organizationId: string, query = '') =>
+    request(app.getHttpServer())
+      .get(`/ledgers${query}`)
+      .set(ORGANIZATION_ID_HEADER, organizationId);
+
   it('creates a ledger', async () => {
     const res = await createLedger(randomUUIDv7(), {
       name: 'main',
@@ -109,5 +114,73 @@ describe('ledgers (e2e)', () => {
     const res = await getLedger(randomUUIDv7(), 'Not-Valid').expect(400);
 
     expect(res.body.errorCode).toBe('VALIDATION');
+  });
+
+  describe('GET /ledgers', () => {
+    const createAll = async (organizationId: string, names: string[]) => {
+      for (const name of names) {
+        await createLedger(organizationId, { name }).expect(201);
+      }
+    };
+
+    it('returns an empty page for an organization with no ledgers', async () => {
+      const res = await listLedgers(randomUUIDv7()).expect(200);
+
+      expect(res.body).toEqual({ data: [], hasMore: false });
+    });
+
+    it('lists the ledgers sorted by name, with the same fields as get', async () => {
+      const organizationId = randomUUIDv7();
+      await createAll(organizationId, ['beta', 'alpha']);
+
+      const res = await listLedgers(organizationId).expect(200);
+      const alpha = await getLedger(organizationId, 'alpha').expect(200);
+
+      expect(res.body.data.map((ledger: { name: string }) => ledger.name)).toEqual([
+        'alpha',
+        'beta',
+      ]);
+      expect(res.body.data[0]).toEqual(alpha.body);
+      expect(res.body.hasMore).toBe(false);
+      expect(res.body).not.toHaveProperty('next');
+    });
+
+    it('reads every ledger once when the "next" cursors are followed', async () => {
+      const organizationId = randomUUIDv7();
+      await createAll(organizationId, ['alpha', 'beta', 'gamma', 'delta', 'epsilon']);
+
+      const pages: string[][] = [];
+      let query = '?pageSize=2';
+      for (;;) {
+        const res = await listLedgers(organizationId, query).expect(200);
+        pages.push(res.body.data.map((ledger: { name: string }) => ledger.name));
+        if (!res.body.hasMore) break;
+        query = `?pageSize=2&cursor=${res.body.next}`;
+      }
+
+      expect(pages).toEqual([['alpha', 'beta'], ['delta', 'epsilon'], ['gamma']]);
+    });
+
+    it('does not list the ledgers of another organization', async () => {
+      await createAll(randomUUIDv7(), ['alpha']);
+      const organizationId = randomUUIDv7();
+      await createAll(organizationId, ['beta']);
+
+      const res = await listLedgers(organizationId).expect(200);
+
+      expect(res.body.data.map((ledger: { name: string }) => ledger.name)).toEqual(['beta']);
+    });
+
+    it('returns 400 VALIDATION for a pageSize that is out of range', async () => {
+      const res = await listLedgers(randomUUIDv7(), '?pageSize=101').expect(400);
+
+      expect(res.body.errorCode).toBe('VALIDATION');
+    });
+
+    it('returns 400 VALIDATION for a cursor that we did not give', async () => {
+      const res = await listLedgers(randomUUIDv7(), '?cursor=hello').expect(400);
+
+      expect(res.body.errorCode).toBe('VALIDATION');
+    });
   });
 });

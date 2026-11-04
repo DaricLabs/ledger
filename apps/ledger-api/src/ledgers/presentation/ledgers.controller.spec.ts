@@ -9,12 +9,14 @@ import { ORGANIZATION_ID_HEADER } from '../../core/tenant/tenant.guard.js';
 import { ValidationModule } from '../../core/validation/validation.module.js';
 import { CreateLedgerUseCase } from '../application/use-cases/create-ledger.use-case.js';
 import { GetLedgerUseCase } from '../application/use-cases/get-ledger.use-case.js';
+import { ListLedgersUseCase } from '../application/use-cases/list-ledgers.use-case.js';
 import { InvalidLedgerMetadataError } from '../domain/invalid-ledger-metadata.error.js';
 import { InvalidLedgerNameError } from '../domain/invalid-ledger-name.error.js';
 import { LedgerAlreadyExistsError } from '../domain/ledger-already-exists.error.js';
 import { LedgerDomainError } from '../domain/ledger-domain.error.js';
 import { LedgerNotFoundError } from '../domain/ledger-not-found.error.js';
 import { Ledger } from '../domain/ledger.entity.js';
+import { encodeLedgerCursor } from './dto/ledger-page-cursor.dto.js';
 import { LedgersController } from './ledgers.controller.js';
 
 // These tests start a real Nest app with the real guard, validation pipe and
@@ -22,6 +24,7 @@ import { LedgersController } from './ledgers.controller.js';
 describe('LedgersController', () => {
   const execute = vi.fn<CreateLedgerUseCase['execute']>();
   const executeGet = vi.fn<GetLedgerUseCase['execute']>();
+  const executeList = vi.fn<ListLedgersUseCase['execute']>();
   const organizationId = randomUUIDv7();
   let app: INestApplication<App>;
 
@@ -36,6 +39,7 @@ describe('LedgersController', () => {
       providers: [
         { provide: CreateLedgerUseCase, useValue: { execute } },
         { provide: GetLedgerUseCase, useValue: { execute: executeGet } },
+        { provide: ListLedgersUseCase, useValue: { execute: executeList } },
       ],
     }).compile();
     app = moduleRef.createNestApplication();
@@ -49,6 +53,7 @@ describe('LedgersController', () => {
   beforeEach(() => {
     execute.mockReset();
     executeGet.mockReset();
+    executeList.mockReset();
     execute.mockImplementation(async (input) =>
       Ledger.create({
         id: randomUUIDv7(),
@@ -324,6 +329,190 @@ describe('LedgersController', () => {
       const res = await get('main').expect(500);
 
       expect(res.body).toEqual({ errorCode: 'INTERNAL', errorMessage: 'Internal server error' });
+    });
+  });
+
+  describe('GET /ledgers', () => {
+    const makeLedger = (name: string) =>
+      Ledger.reconstitute({
+        id: randomUUIDv7(),
+        organizationId,
+        name,
+        metadata: { env: 'prod' },
+        createdAt: new Date('2026-11-03T10:00:00.000Z'),
+      });
+
+    beforeEach(() => {
+      executeList.mockResolvedValue({ ledgers: [makeLedger('alpha')], hasMore: false });
+    });
+
+    /** `org` is the header value. Pass `null` to send no header at all. */
+    const list = (query = '', org: string | null = organizationId) => {
+      const req = request(app.getHttpServer()).get(`/ledgers${query}`);
+      if (org !== null) req.set(ORGANIZATION_ID_HEADER, org);
+      return req;
+    };
+
+    describe('success', () => {
+      it('returns 200 with the ledgers in "data" and no organization id', async () => {
+        const stored = makeLedger('alpha');
+        executeList.mockResolvedValue({ ledgers: [stored], hasMore: false });
+
+        const res = await list().expect(200);
+
+        expect(res.body).toEqual({
+          data: [
+            {
+              id: stored.id,
+              name: 'alpha',
+              metadata: { env: 'prod' },
+              createdAt: '2026-11-03T10:00:00.000Z',
+            },
+          ],
+          hasMore: false,
+        });
+      });
+
+      it('returns an empty page when there are no ledgers', async () => {
+        executeList.mockResolvedValue({ ledgers: [], hasMore: false });
+
+        const res = await list().expect(200);
+
+        expect(res.body).toEqual({ data: [], hasMore: false });
+      });
+
+      it('gives the use case the organization of the header, the default page size and no position', async () => {
+        await list().expect(200);
+
+        expect(executeList).toHaveBeenCalledExactlyOnceWith({
+          organizationId,
+          pageSize: 15,
+          afterName: undefined,
+        });
+      });
+
+      it('gives the use case the page size of the query', async () => {
+        await list('?pageSize=3').expect(200);
+
+        expect(executeList).toHaveBeenCalledWith(expect.objectContaining({ pageSize: 3 }));
+      });
+
+      it.each([['1'], ['100']])('accepts the page size %s', async (pageSize) => {
+        await list(`?pageSize=${pageSize}`).expect(200);
+      });
+
+      it('gives the use case the ledger name that the cursor holds', async () => {
+        await list(`?cursor=${encodeLedgerCursor('alpha')}`).expect(200);
+
+        expect(executeList).toHaveBeenCalledWith(expect.objectContaining({ afterName: 'alpha' }));
+      });
+
+      it('gives a lowercase organization id to the use case', async () => {
+        await list('', organizationId.toUpperCase()).expect(200);
+
+        expect(executeList).toHaveBeenCalledWith(expect.objectContaining({ organizationId }));
+      });
+    });
+
+    describe('next page', () => {
+      it('sends "next" and hasMore when there are more ledgers', async () => {
+        executeList.mockResolvedValue({
+          ledgers: [makeLedger('alpha'), makeLedger('beta')],
+          hasMore: true,
+        });
+
+        const res = await list('?pageSize=2').expect(200);
+
+        expect(res.body.hasMore).toBe(true);
+        expect(res.body.next).toBe(encodeLedgerCursor('beta')); // the last ledger of the page
+      });
+
+      it('sends no "next" on the last page', async () => {
+        const res = await list().expect(200);
+
+        expect(res.body.hasMore).toBe(false);
+        expect(res.body).not.toHaveProperty('next');
+      });
+
+      it('makes a "next" that the same route accepts', async () => {
+        executeList.mockResolvedValueOnce({ ledgers: [makeLedger('alpha')], hasMore: true });
+
+        const first = await list('?pageSize=1').expect(200);
+        await list(`?pageSize=1&cursor=${first.body.next}`).expect(200);
+
+        expect(executeList).toHaveBeenLastCalledWith(
+          expect.objectContaining({ afterName: 'alpha' }),
+        );
+      });
+    });
+
+    describe('tenant header', () => {
+      it('returns 400 INVALID_REQUEST when the header is missing', async () => {
+        const res = await list('', null).expect(400);
+
+        expect(res.body.errorCode).toBe('INVALID_REQUEST');
+        expect(executeList).not.toHaveBeenCalled();
+      });
+
+      it('checks the header before the query', async () => {
+        const res = await list('?pageSize=0', 'not-an-id').expect(400);
+
+        expect(res.body.errorCode).toBe('INVALID_REQUEST');
+      });
+    });
+
+    describe('query validation', () => {
+      const invalidQueries: [string, string, string][] = [
+        ['pageSize is 0', '?pageSize=0', 'pageSize'],
+        ['pageSize is above 100', '?pageSize=101', 'pageSize'],
+        ['pageSize is huge', `?pageSize=${'9'.repeat(400)}`, 'pageSize'],
+        ['pageSize is negative', '?pageSize=-1', 'pageSize'],
+        ['pageSize has decimals', '?pageSize=1.5', 'pageSize'],
+        ['pageSize is not a number', '?pageSize=abc', 'pageSize'],
+        ['pageSize is in hex', '?pageSize=0x10', 'pageSize'],
+        ['pageSize is in exponent form', '?pageSize=1e1', 'pageSize'],
+        ['pageSize is empty', '?pageSize=', 'pageSize'],
+        ['pageSize is sent twice', '?pageSize=1&pageSize=2', 'pageSize'],
+        ['the cursor is not a cursor', '?cursor=hello', 'cursor'],
+        ['the cursor is empty', '?cursor=', 'cursor'],
+        ['the cursor is sent twice', '?cursor=a&cursor=b', 'cursor'],
+        [
+          'the cursor holds a bad ledger name',
+          `?cursor=${Buffer.from('{"key":"Not Valid"}').toString('base64url')}`,
+          'cursor',
+        ],
+        ['a query parameter is unknown', '?pagesize=5', ''],
+      ];
+
+      it.each(invalidQueries)('returns 400 VALIDATION when %s', async (_title, query, path) => {
+        const res = await list(query).expect(400);
+
+        expect(res.body.errorCode).toBe('VALIDATION');
+        expect(res.body.details.map((d: { path: string }) => d.path)).toContain(path);
+        expect(executeList).not.toHaveBeenCalled();
+      });
+
+      it('gives one error for a pageSize that is not a number', async () => {
+        const res = await list('?pageSize=abc').expect(400);
+
+        expect(res.body.details).toHaveLength(1);
+      });
+
+      it('does not echo the cursor in the error', async () => {
+        const res = await list('?cursor=secret-looking-text').expect(400);
+
+        expect(JSON.stringify(res.body)).not.toContain('secret-looking-text');
+      });
+    });
+
+    describe('errors', () => {
+      it('returns 500 INTERNAL, with no details, for an unknown error', async () => {
+        executeList.mockRejectedValue(new Error('connect ECONNREFUSED 10.0.0.5:5432'));
+
+        const res = await list().expect(500);
+
+        expect(res.body).toEqual({ errorCode: 'INTERNAL', errorMessage: 'Internal server error' });
+      });
     });
   });
 });

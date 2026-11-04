@@ -7,6 +7,7 @@ import { KYSELY_DB } from '../core/database/database.tokens.js';
 import { LEDGER_LOG_WRITER } from './application/ports/ledger-log-writer.port.js';
 import { CreateLedgerUseCase } from './application/use-cases/create-ledger.use-case.js';
 import { GetLedgerUseCase } from './application/use-cases/get-ledger.use-case.js';
+import { ListLedgersUseCase } from './application/use-cases/list-ledgers.use-case.js';
 import { LedgerAlreadyExistsError } from './domain/ledger-already-exists.error.js';
 import { LedgerNotFoundError } from './domain/ledger-not-found.error.js';
 import { Uuidv7IdGenerator } from './infrastructure/uuidv7-id-generator.js';
@@ -42,12 +43,14 @@ describe('LedgersModule (real database)', () => {
   let db: LedgerDatabase;
   let createLedger: CreateLedgerUseCase;
   let getLedger: GetLedgerUseCase;
+  let listLedgers: ListLedgersUseCase;
 
   beforeAll(async () => {
     app = await buildApp();
     db = app.get<LedgerDatabase>(KYSELY_DB);
     createLedger = app.get(CreateLedgerUseCase);
     getLedger = app.get(GetLedgerUseCase);
+    listLedgers = app.get(ListLedgersUseCase);
   });
 
   afterAll(async () => {
@@ -186,6 +189,58 @@ describe('LedgersModule (real database)', () => {
       const { logs, events } = await readState(organizationId);
 
       expect([logs.length, events.length]).toEqual([1, 1]); // only the ones from create
+    });
+  });
+
+  describe('listing ledgers', () => {
+    const createAll = async (organizationId: string, names: string[]) => {
+      for (const name of names) {
+        await createLedger.execute({ organizationId, name, metadata: {} });
+      }
+    };
+
+    it('returns the ledgers that were created, sorted by name', async () => {
+      const organizationId = newOrganizationId();
+      await createAll(organizationId, ['gamma', 'alpha', 'beta']);
+
+      const page = await listLedgers.execute({ organizationId, pageSize: 10 });
+
+      expect(page.ledgers.map((ledger) => ledger.name)).toEqual(['alpha', 'beta', 'gamma']);
+      expect(page.hasMore).toBe(false);
+    });
+
+    it('gives the next page when the last name of the page is used as the position', async () => {
+      const organizationId = newOrganizationId();
+      await createAll(organizationId, ['alpha', 'beta', 'gamma']);
+
+      const first = await listLedgers.execute({ organizationId, pageSize: 2 });
+      const second = await listLedgers.execute({
+        organizationId,
+        pageSize: 2,
+        afterName: first.ledgers.at(-1)?.name,
+      });
+
+      expect(first.hasMore).toBe(true);
+      expect(second.ledgers.map((ledger) => ledger.name)).toEqual(['gamma']);
+      expect(second.hasMore).toBe(false);
+    });
+
+    it('returns an empty page for an organization with no ledgers, even when others have some', async () => {
+      await createAll(newOrganizationId(), ['main']);
+
+      const page = await listLedgers.execute({ organizationId: newOrganizationId(), pageSize: 10 });
+
+      expect(page).toEqual({ ledgers: [], hasMore: false });
+    });
+
+    it('does not write any log or outbox event', async () => {
+      const organizationId = newOrganizationId();
+      await createAll(organizationId, ['alpha', 'beta']);
+
+      await listLedgers.execute({ organizationId, pageSize: 10 });
+      const { logs, events } = await readState(organizationId);
+
+      expect([logs.length, events.length]).toEqual([2, 2]); // only the ones from the two creates
     });
   });
 
