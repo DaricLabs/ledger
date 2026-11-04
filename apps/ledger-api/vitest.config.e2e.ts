@@ -5,6 +5,7 @@ export default defineConfig({
     globals: true,
     root: './',
     include: ['**/*.e2e-spec.ts'],
+    isolate: false,
     // The test database must be running (compose.test.yaml, port 5433).
     // CI sets the URL in ci.yml; locally the default below is used.
     // The TEST_ name is on purpose: LEDGER_* points at the dev database.

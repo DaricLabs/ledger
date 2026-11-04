@@ -6,7 +6,9 @@ import { unwrapTenantTransaction, withTenant, type LedgerDatabase } from '@ledge
 import { KYSELY_DB } from '../core/database/database.tokens.js';
 import { LEDGER_LOG_WRITER } from './application/ports/ledger-log-writer.port.js';
 import { CreateLedgerUseCase } from './application/use-cases/create-ledger.use-case.js';
+import { GetLedgerUseCase } from './application/use-cases/get-ledger.use-case.js';
 import { LedgerAlreadyExistsError } from './domain/ledger-already-exists.error.js';
+import { LedgerNotFoundError } from './domain/ledger-not-found.error.js';
 import { Uuidv7IdGenerator } from './infrastructure/uuidv7-id-generator.js';
 import { LedgersModule } from './ledgers.module.js';
 
@@ -39,11 +41,13 @@ describe('LedgersModule (real database)', () => {
   let app: INestApplication;
   let db: LedgerDatabase;
   let createLedger: CreateLedgerUseCase;
+  let getLedger: GetLedgerUseCase;
 
   beforeAll(async () => {
     app = await buildApp();
     db = app.get<LedgerDatabase>(KYSELY_DB);
     createLedger = app.get(CreateLedgerUseCase);
+    getLedger = app.get(GetLedgerUseCase);
   });
 
   afterAll(async () => {
@@ -141,6 +145,48 @@ describe('LedgersModule (real database)', () => {
     const state = await readState(other);
 
     expect([state.ledgers.length, state.logs.length, state.events.length]).toEqual([0, 0, 0]);
+  });
+
+  describe('getting a ledger', () => {
+    it('returns the ledger that was created', async () => {
+      const organizationId = newOrganizationId();
+      const created = await createLedger.execute({
+        organizationId,
+        name: 'main',
+        metadata: { env: 'prod' },
+      });
+
+      const found = await getLedger.execute({ organizationId, name: 'main' });
+
+      expect(found.id).toBe(created.id);
+      expect(found.metadata).toEqual({ env: 'prod' });
+      expect(found.createdAt).toEqual(created.createdAt);
+    });
+
+    it('throws LedgerNotFoundError for a name the organization does not have', async () => {
+      await expect(
+        getLedger.execute({ organizationId: newOrganizationId(), name: 'main' }),
+      ).rejects.toBeInstanceOf(LedgerNotFoundError);
+    });
+
+    it('throws LedgerNotFoundError for the ledger of another organization', async () => {
+      const owner = newOrganizationId();
+      await createLedger.execute({ organizationId: owner, name: 'main', metadata: {} });
+
+      await expect(
+        getLedger.execute({ organizationId: newOrganizationId(), name: 'main' }),
+      ).rejects.toBeInstanceOf(LedgerNotFoundError);
+    });
+
+    it('does not write any log or outbox event', async () => {
+      const organizationId = newOrganizationId();
+      await createLedger.execute({ organizationId, name: 'main', metadata: {} });
+
+      await getLedger.execute({ organizationId, name: 'main' });
+      const { logs, events } = await readState(organizationId);
+
+      expect([logs.length, events.length]).toEqual([1, 1]); // only the ones from create
+    });
   });
 
   describe('when a step fails after the ledger row was written', () => {

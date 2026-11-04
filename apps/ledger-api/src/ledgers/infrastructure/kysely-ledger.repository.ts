@@ -3,7 +3,7 @@ import { isUniqueViolation, unwrapTenantTransaction } from '@ledger/database/sto
 import type { TenantTransaction } from '@ledger/database';
 import type { ILedgerRepository } from '../application/ports/ledger-repository.port.js';
 import { LedgerAlreadyExistsError } from '../domain/ledger-already-exists.error.js';
-import type { Ledger } from '../domain/ledger.entity.js';
+import { Ledger, type LedgerMetadata } from '../domain/ledger.entity.js';
 
 /** Postgres name of `unique (organization_id, name)` on `ledgers`. */
 const NAME_UNIQUE_CONSTRAINT = 'ledgers_organization_id_name_key';
@@ -31,5 +31,28 @@ export class KyselyLedgerRepository implements ILedgerRepository {
       }
       throw error;
     }
+  }
+
+  async findByName(trx: TenantTransaction, name: string): Promise<Ledger | null> {
+    // No `organization_id` filter on purpose: row-level security already limits
+    // the rows to the organization of the transaction.
+    const row = await unwrapTenantTransaction(trx)
+      .selectFrom('ledgers')
+      .select(['id', 'organization_id', 'name', 'metadata', 'created_at'])
+      .where('name', '=', name)
+      .executeTakeFirst();
+
+    if (row === undefined) {
+      return null;
+    }
+    return Ledger.reconstitute({
+      id: row.id,
+      organizationId: row.organization_id,
+      name: row.name,
+      // Safe cast: every ledger is saved through `Ledger.create`, which allows
+      // string values only. The database itself only checks "a JSON object".
+      metadata: row.metadata as LedgerMetadata,
+      createdAt: row.created_at,
+    });
   }
 }
