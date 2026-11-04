@@ -7,7 +7,6 @@ export default defineConfig({
     globals: true,
     root: './',
     include: ['src/**/*.integration-spec.ts'],
-    isolate: false,
     env: {
       // TEST_ name on purpose: LEDGER_* points at the dev database, tests must never use it.
       LEDGER_RUNTIME_DATABASE_URL:
