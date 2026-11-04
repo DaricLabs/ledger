@@ -37,6 +37,7 @@ function setup() {
       calls.push('find');
       return storedLedger;
     }),
+    findPage: vi.fn<ILedgerRepository['findPage']>(),
   };
 
   const useCase = new GetLedgerUseCase(

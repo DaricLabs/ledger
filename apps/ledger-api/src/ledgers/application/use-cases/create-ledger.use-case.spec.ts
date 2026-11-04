@@ -32,6 +32,7 @@ function setup() {
     }),
     // Creating a ledger never reads one.
     findByName: vi.fn<ILedgerRepository['findByName']>(),
+    findPage: vi.fn<ILedgerRepository['findPage']>(),
   };
   const logs = {
     append: vi.fn<ILedgerLogWriter['append']>(async () => {

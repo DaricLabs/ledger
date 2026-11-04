@@ -1,6 +1,26 @@
 import type { TenantTransaction } from '@ledger/database';
 import type { Ledger } from '../../domain/ledger.entity.js';
 
+/** Which page of ledgers to load. */
+export interface ILedgerPageQuery {
+  /** The most ledgers to return. At least 1. */
+  limit: number;
+  /**
+   * Return only ledgers whose name comes after this one. The name does not have
+   * to belong to a ledger: a deleted ledger still works as a position.
+   * Leave it out for the first page.
+   */
+  afterName?: string;
+}
+
+/** One page of ledgers, sorted by name. */
+export interface ILedgerPage {
+  /** At most `limit` ledgers, in ascending name order. */
+  ledgers: Ledger[];
+  /** `true` when at least one more ledger comes after this page. */
+  hasMore: boolean;
+}
+
 /** Storage of ledgers. Every method works inside a transaction the caller owns. */
 export interface ILedgerRepository {
   /**
@@ -18,6 +38,16 @@ export interface ILedgerRepository {
    * organization counts as "no such ledger".
    */
   findByName(trx: TenantTransaction, name: string): Promise<Ledger | null>;
+
+  /**
+   * Loads one page of the ledgers of the organization of the transaction,
+   * sorted by name (ascending).
+   *
+   * The page is found by position (the name before it), not by page number, so
+   * ledgers that are added or removed between two calls never cause a repeat or
+   * a gap on the pages that follow.
+   */
+  findPage(trx: TenantTransaction, query: ILedgerPageQuery): Promise<ILedgerPage>;
 }
 
 /** Nest DI token for {@link ILedgerRepository}. */

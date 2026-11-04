@@ -1,11 +1,28 @@
-import { Body, Controller, Get, Param, Post, Res, UseFilters, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  Res,
+  UseFilters,
+  UseGuards,
+} from '@nestjs/common';
 import type { Response } from 'express';
 import { OrganizationId } from '../../core/tenant/organization-id.decorator.js';
 import { TenantGuard } from '../../core/tenant/tenant.guard.js';
 import { CreateLedgerUseCase } from '../application/use-cases/create-ledger.use-case.js';
 import { GetLedgerUseCase } from '../application/use-cases/get-ledger.use-case.js';
+import { ListLedgersUseCase } from '../application/use-cases/list-ledgers.use-case.js';
 import { createLedgerSchema, type CreateLedgerDto } from './dto/create-ledger.dto.js';
-import { toLedgerResponseDto, type LedgerResponseDto } from './dto/ledger-response.dto.js';
+import { listLedgersQuerySchema, type ListLedgersQueryDto } from './dto/list-ledgers-query.dto.js';
+import {
+  toLedgerPageResponseDto,
+  toLedgerResponseDto,
+  type LedgerPageResponseDto,
+  type LedgerResponseDto,
+} from './dto/ledger-response.dto.js';
 import { ledgerNameSchema } from './dto/ledger-name.dto.js';
 import { LedgerExceptionFilter } from './ledger-exception.filter.js';
 
@@ -26,6 +43,7 @@ export class LedgersController {
   constructor(
     private readonly createLedger: CreateLedgerUseCase,
     private readonly getLedger: GetLedgerUseCase,
+    private readonly listLedgers: ListLedgersUseCase,
   ) {}
 
   /**
@@ -50,6 +68,30 @@ export class LedgersController {
     // The name is safe in a URL: it passed the name pattern.
     response.location(`/${LEDGERS_PATH}/${ledger.name}`);
     return toLedgerResponseDto(ledger);
+  }
+
+  /**
+   * Lists the ledgers of the organization of the `X-Organization-Id` header,
+   * sorted by name, one page at a time.
+   *
+   * To read all pages, call again with `cursor` set to the `next` of the last
+   * response, until `hasMore` is `false`.
+   *
+   * - `200`: one page. It is empty when the organization has no ledgers.
+   * - `400`: `VALIDATION` (`pageSize` is not a whole number from 1 to 100, the
+   *   `cursor` is not one we gave, or a query parameter is unknown).
+   */
+  @Get()
+  async list(
+    @OrganizationId() organizationId: string,
+    @Query({ schema: listLedgersQuerySchema }) query: ListLedgersQueryDto,
+  ): Promise<LedgerPageResponseDto> {
+    const page = await this.listLedgers.execute({
+      organizationId,
+      pageSize: query.pageSize,
+      afterName: query.cursor,
+    });
+    return toLedgerPageResponseDto(page);
   }
 
   /**

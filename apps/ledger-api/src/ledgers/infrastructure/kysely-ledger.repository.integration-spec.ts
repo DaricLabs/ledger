@@ -1,4 +1,5 @@
 import { createDb, SqlState, withTenant, type LedgerDatabase } from '@ledger/database/storage';
+import type { ILedgerPage, ILedgerPageQuery } from '../application/ports/ledger-repository.port.js';
 import { LedgerAlreadyExistsError } from '../domain/ledger-already-exists.error.js';
 import { Ledger } from '../domain/ledger.entity.js';
 import { KyselyLedgerRepository } from './kysely-ledger.repository.js';
@@ -110,5 +111,150 @@ describe('KyselyLedgerRepository.findByName', () => {
     const found = await withTenant(db, second, (trx) => repository.findByName(trx, 'main'));
 
     expect(found?.id).toBe(secondLedger.id);
+  });
+});
+
+describe('KyselyLedgerRepository.findPage', () => {
+  /** Saves one ledger per name, in this order. */
+  const saveAll = (organizationId: string, names: string[]) =>
+    withTenant(db, organizationId, async (trx) => {
+      for (const name of names) {
+        await repository.insert(trx, makeLedger(organizationId, name));
+      }
+    });
+
+  const readPage = (organizationId: string, query: ILedgerPageQuery) =>
+    withTenant(db, organizationId, (trx) => repository.findPage(trx, query));
+
+  const namesOf = (page: ILedgerPage) => page.ledgers.map((ledger) => ledger.name);
+
+  it('loads the ledgers with all their fields', async () => {
+    const organizationId = ids.next();
+    const saved = Ledger.create({
+      id: ids.next(),
+      organizationId,
+      name: 'main',
+      metadata: { env: 'prod', team: 'payments' },
+      createdAt: new Date('2026-11-04T10:00:00.123Z'),
+    });
+    await withTenant(db, organizationId, (trx) => repository.insert(trx, saved));
+
+    const page = await readPage(organizationId, { limit: 10 });
+
+    expect(page.ledgers).toHaveLength(1);
+    const [found] = page.ledgers;
+    expect(found).toBeInstanceOf(Ledger);
+    expect(found?.id).toBe(saved.id);
+    expect(found?.organizationId).toBe(organizationId);
+    expect(found?.name).toBe('main');
+    expect(found?.metadata).toEqual({ env: 'prod', team: 'payments' });
+    expect(found?.createdAt).toEqual(saved.createdAt);
+  });
+
+  it('sorts by name, whatever the order the ledgers were saved in', async () => {
+    const organizationId = ids.next();
+    await saveAll(organizationId, ['gamma', 'alpha', 'beta']);
+
+    const page = await readPage(organizationId, { limit: 10 });
+
+    expect(namesOf(page)).toEqual(['alpha', 'beta', 'gamma']);
+    expect(page.hasMore).toBe(false);
+  });
+
+  it('returns an empty page when the organization has no ledgers', async () => {
+    const page = await readPage(ids.next(), { limit: 10 });
+
+    expect(page).toEqual({ ledgers: [], hasMore: false });
+  });
+
+  it('returns at most `limit` ledgers and says there are more', async () => {
+    const organizationId = ids.next();
+    await saveAll(organizationId, ['alpha', 'beta', 'gamma']);
+
+    const page = await readPage(organizationId, { limit: 2 });
+
+    expect(namesOf(page)).toEqual(['alpha', 'beta']);
+    expect(page.hasMore).toBe(true);
+  });
+
+  it('says there is nothing more when the page holds exactly the rest', async () => {
+    const organizationId = ids.next();
+    await saveAll(organizationId, ['alpha', 'beta', 'gamma']);
+
+    const exact = await readPage(organizationId, { limit: 3 });
+    const roomToSpare = await readPage(organizationId, { limit: 5 });
+
+    expect(namesOf(exact)).toEqual(['alpha', 'beta', 'gamma']);
+    expect(exact.hasMore).toBe(false);
+    expect(roomToSpare.hasMore).toBe(false);
+  });
+
+  it('starts after the given name and does not include it', async () => {
+    const organizationId = ids.next();
+    await saveAll(organizationId, ['alpha', 'beta', 'gamma']);
+
+    const page = await readPage(organizationId, { limit: 10, afterName: 'alpha' });
+
+    expect(namesOf(page)).toEqual(['beta', 'gamma']);
+  });
+
+  it('accepts a position that no ledger has', async () => {
+    const organizationId = ids.next();
+    await saveAll(organizationId, ['alpha', 'beta', 'gamma']);
+
+    // "b" comes before "beta", and no ledger is called "b".
+    const page = await readPage(organizationId, { limit: 10, afterName: 'b' });
+
+    expect(namesOf(page)).toEqual(['beta', 'gamma']);
+  });
+
+  it('returns an empty page after the last name', async () => {
+    const organizationId = ids.next();
+    await saveAll(organizationId, ['alpha', 'beta']);
+
+    const page = await readPage(organizationId, { limit: 10, afterName: 'beta' });
+
+    expect(page).toEqual({ ledgers: [], hasMore: false });
+  });
+
+  it('does not return the ledgers of other organizations', async () => {
+    const owner = ids.next();
+    const other = ids.next();
+    await saveAll(owner, ['alpha', 'beta']);
+    await saveAll(other, ['gamma']);
+
+    const page = await readPage(other, { limit: 10 });
+
+    expect(namesOf(page)).toEqual(['gamma']);
+  });
+
+  it('reads every ledger once when the pages are followed one by one', async () => {
+    const organizationId = ids.next();
+    const names = ['alpha', 'beta', 'gamma', 'delta', 'epsilon'];
+    await saveAll(organizationId, names);
+
+    const pages: string[][] = [];
+    let afterName: string | undefined;
+    for (;;) {
+      const page = await readPage(organizationId, { limit: 2, afterName });
+      pages.push(namesOf(page));
+      if (!page.hasMore) break;
+      afterName = page.ledgers.at(-1)?.name;
+    }
+
+    expect(pages).toEqual([['alpha', 'beta'], ['delta', 'epsilon'], ['gamma']]);
+  });
+
+  it('does not repeat a ledger when others are added between two pages', async () => {
+    const organizationId = ids.next();
+    await saveAll(organizationId, ['b', 'd', 'f']);
+
+    const first = await readPage(organizationId, { limit: 2 });
+    // One ledger before the position, and one after it.
+    await saveAll(organizationId, ['a', 'e']);
+    const second = await readPage(organizationId, { limit: 2, afterName: 'd' });
+
+    expect(namesOf(first)).toEqual(['b', 'd']);
+    expect(namesOf(second)).toEqual(['e', 'f']);
   });
 });
