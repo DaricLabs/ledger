@@ -37,6 +37,8 @@ function setup() {
       calls.push('find');
       return storedLedger;
     }),
+    findByNameForUpdate: vi.fn<ILedgerRepository['findByNameForUpdate']>(),
+    updateMetadata: vi.fn<ILedgerRepository['updateMetadata']>(),
     findPage: vi.fn<ILedgerRepository['findPage']>(),
   };
 

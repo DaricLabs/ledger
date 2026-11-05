@@ -1,4 +1,11 @@
-import { createDb, SqlState, withTenant, type LedgerDatabase } from '@ledger/database/storage';
+import {
+  createDb,
+  sql,
+  SqlState,
+  unwrapTenantTransaction,
+  withTenant,
+  type LedgerDatabase,
+} from '@ledger/database/storage';
 import type { ILedgerPage, ILedgerPageQuery } from '../application/ports/ledger-repository.port.js';
 import { LedgerAlreadyExistsError } from '../domain/ledger-already-exists.error.js';
 import { Ledger } from '../domain/ledger.entity.js';
@@ -111,6 +118,241 @@ describe('KyselyLedgerRepository.findByName', () => {
     const found = await withTenant(db, second, (trx) => repository.findByName(trx, 'main'));
 
     expect(found?.id).toBe(secondLedger.id);
+  });
+});
+
+describe('KyselyLedgerRepository.findByNameForUpdate', () => {
+  it('loads a saved ledger with all its fields', async () => {
+    const organizationId = ids.next();
+    const saved = Ledger.create({
+      id: ids.next(),
+      organizationId,
+      name: 'main',
+      metadata: { env: 'prod' },
+      createdAt: new Date('2026-11-05T10:00:00.123Z'),
+    });
+    await withTenant(db, organizationId, (trx) => repository.insert(trx, saved));
+
+    const found = await withTenant(db, organizationId, (trx) =>
+      repository.findByNameForUpdate(trx, 'main'),
+    );
+
+    expect(found).toBeInstanceOf(Ledger);
+    expect(found?.id).toBe(saved.id);
+    expect(found?.organizationId).toBe(organizationId);
+    expect(found?.name).toBe('main');
+    expect(found?.metadata).toEqual({ env: 'prod' });
+    expect(found?.createdAt).toEqual(saved.createdAt);
+  });
+
+  it('returns null when the organization has no ledger with this name', async () => {
+    const found = await withTenant(db, ids.next(), (trx) =>
+      repository.findByNameForUpdate(trx, 'main'),
+    );
+
+    expect(found).toBeNull();
+  });
+
+  it('does not find the ledger of another organization', async () => {
+    const owner = ids.next();
+    await withTenant(db, owner, (trx) => repository.insert(trx, makeLedger(owner, 'main')));
+
+    const found = await withTenant(db, ids.next(), (trx) =>
+      repository.findByNameForUpdate(trx, 'main'),
+    );
+
+    expect(found).toBeNull();
+  });
+
+  describe('the lock', () => {
+    /**
+     * Locks the ledger in a transaction that stays open until `release` is
+     * called. Resolves when the lock is taken.
+     */
+    async function holdLock(organizationId: string) {
+      let release!: () => void;
+      const released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let taken!: () => void;
+      const lockTaken = new Promise<void>((resolve) => {
+        taken = resolve;
+      });
+
+      const done = withTenant(db, organizationId, async (trx) => {
+        await repository.findByNameForUpdate(trx, 'main');
+        taken();
+        await released;
+      });
+      await Promise.race([lockTaken, done]); // `done` ends first only if locking failed
+      return { release, done };
+    }
+
+    it('makes a second locking read wait until the first transaction ends', async () => {
+      const organizationId = ids.next();
+      await withTenant(db, organizationId, (trx) =>
+        repository.insert(trx, makeLedger(organizationId, 'main')),
+      );
+      const first = await holdLock(organizationId);
+
+      // A short lock timeout turns "waits forever" into an error we can check.
+      const second = withTenant(db, organizationId, async (trx) => {
+        await sql`set local lock_timeout = '300ms'`.execute(unwrapTenantTransaction(trx));
+        await repository.findByNameForUpdate(trx, 'main');
+      });
+
+      await expect(second).rejects.toMatchObject({ code: SqlState.LockNotAvailable });
+      first.release();
+      await first.done;
+    });
+
+    it('lets the next locking read go on after the first transaction ends', async () => {
+      const organizationId = ids.next();
+      await withTenant(db, organizationId, (trx) =>
+        repository.insert(trx, makeLedger(organizationId, 'main')),
+      );
+      const first = await holdLock(organizationId);
+      first.release();
+      await first.done;
+
+      const found = await withTenant(db, organizationId, (trx) =>
+        repository.findByNameForUpdate(trx, 'main'),
+      );
+
+      expect(found?.name).toBe('main');
+    });
+
+    it('does not block a plain read of the same ledger', async () => {
+      const organizationId = ids.next();
+      await withTenant(db, organizationId, (trx) =>
+        repository.insert(trx, makeLedger(organizationId, 'main')),
+      );
+      const first = await holdLock(organizationId);
+
+      const found = await withTenant(db, organizationId, async (trx) => {
+        await sql`set local lock_timeout = '300ms'`.execute(unwrapTenantTransaction(trx));
+        return repository.findByName(trx, 'main');
+      });
+
+      expect(found?.name).toBe('main');
+      first.release();
+      await first.done;
+    });
+  });
+});
+
+describe('KyselyLedgerRepository.updateMetadata', () => {
+  const insertWithMetadata = async (
+    organizationId: string,
+    name: string,
+    metadata: Record<string, string>,
+  ) => {
+    const ledger = Ledger.create({
+      id: ids.next(),
+      organizationId,
+      name,
+      metadata,
+      createdAt: new Date('2026-11-05T10:00:00.123Z'),
+    });
+    await withTenant(db, organizationId, (trx) => repository.insert(trx, ledger));
+    return ledger;
+  };
+
+  it('saves the new metadata and changes nothing else', async () => {
+    const organizationId = ids.next();
+    const saved = await insertWithMetadata(organizationId, 'main', { env: 'prod' });
+
+    await withTenant(db, organizationId, (trx) =>
+      repository.updateMetadata(trx, saved.withMetadata({ env: 'staging', tier: '1' })),
+    );
+    const found = await withTenant(db, organizationId, (trx) => repository.findByName(trx, 'main'));
+
+    expect(found?.metadata).toEqual({ env: 'staging', tier: '1' });
+    expect(found?.id).toBe(saved.id);
+    expect(found?.name).toBe('main');
+    expect(found?.createdAt).toEqual(saved.createdAt);
+  });
+
+  it('writes exactly the metadata of the ledger it is given, so a removed key is gone', async () => {
+    const organizationId = ids.next();
+    const saved = await insertWithMetadata(organizationId, 'main', { env: 'prod', team: 'pay' });
+
+    await withTenant(db, organizationId, (trx) =>
+      repository.updateMetadata(trx, saved.withoutMetadataKey('env')),
+    );
+    const found = await withTenant(db, organizationId, (trx) => repository.findByName(trx, 'main'));
+
+    expect(found?.metadata).toEqual({ team: 'pay' });
+  });
+
+  it('can save empty metadata', async () => {
+    const organizationId = ids.next();
+    const saved = await insertWithMetadata(organizationId, 'main', { env: 'prod' });
+
+    await withTenant(db, organizationId, (trx) =>
+      repository.updateMetadata(trx, saved.withoutMetadataKey('env')),
+    );
+    const found = await withTenant(db, organizationId, (trx) => repository.findByName(trx, 'main'));
+
+    expect(found?.metadata).toEqual({});
+  });
+
+  it('keeps quotes, unicode and long values as they are', async () => {
+    const organizationId = ids.next();
+    const saved = await insertWithMetadata(organizationId, 'main', {});
+    const metadata = {
+      'key "with" quotes': `it's a "value" with \\ backslash`,
+      größe: 'Zürich ✓ 日本語 😀',
+      long: 'x'.repeat(10_000),
+    };
+
+    await withTenant(db, organizationId, (trx) =>
+      repository.updateMetadata(trx, saved.withMetadata(metadata)),
+    );
+    const found = await withTenant(db, organizationId, (trx) => repository.findByName(trx, 'main'));
+
+    expect(found?.metadata).toEqual(metadata);
+  });
+
+  it('does not change another ledger of the same organization', async () => {
+    const organizationId = ids.next();
+    const main = await insertWithMetadata(organizationId, 'main', { env: 'prod' });
+    await insertWithMetadata(organizationId, 'other', { env: 'dev' });
+
+    await withTenant(db, organizationId, (trx) =>
+      repository.updateMetadata(trx, main.withMetadata({ env: 'staging' })),
+    );
+    const other = await withTenant(db, organizationId, (trx) =>
+      repository.findByName(trx, 'other'),
+    );
+
+    expect(other?.metadata).toEqual({ env: 'dev' });
+  });
+
+  it('throws, and changes nothing, for a ledger of another organization', async () => {
+    const owner = ids.next();
+    const stranger = ids.next();
+    const saved = await insertWithMetadata(owner, 'main', { env: 'prod' });
+
+    // The stranger's transaction cannot see the row, so 0 rows are updated.
+    await expect(
+      withTenant(db, stranger, (trx) =>
+        repository.updateMetadata(trx, saved.withMetadata({ env: 'hacked' })),
+      ),
+    ).rejects.toThrow('Expected to update 1 ledger row, but updated 0');
+
+    const found = await withTenant(db, owner, (trx) => repository.findByName(trx, 'main'));
+    expect(found?.metadata).toEqual({ env: 'prod' });
+  });
+
+  it('throws for a ledger that was never saved', async () => {
+    const organizationId = ids.next();
+
+    await expect(
+      withTenant(db, organizationId, (trx) =>
+        repository.updateMetadata(trx, makeLedger(organizationId, 'main')),
+      ),
+    ).rejects.toThrow('Expected to update 1 ledger row, but updated 0');
   });
 });
 

@@ -6,8 +6,10 @@ import { LEDGER_REPOSITORY } from './application/ports/ledger-repository.port.js
 import { OUTBOX_WRITER } from './application/ports/outbox-writer.port.js';
 import { TENANT_TRANSACTION_RUNNER } from './application/ports/tenant-transaction-runner.port.js';
 import { CreateLedgerUseCase } from './application/use-cases/create-ledger.use-case.js';
+import { DeleteLedgerMetadataUseCase } from './application/use-cases/delete-ledger-metadata.use-case.js';
 import { GetLedgerUseCase } from './application/use-cases/get-ledger.use-case.js';
 import { ListLedgersUseCase } from './application/use-cases/list-ledgers.use-case.js';
+import { SaveLedgerMetadataUseCase } from './application/use-cases/save-ledger-metadata.use-case.js';
 import { KyselyLedgerLogWriter } from './infrastructure/kysely-ledger-log-writer.js';
 import { KyselyLedgerRepository } from './infrastructure/kysely-ledger.repository.js';
 import { KyselyOutboxWriter } from './infrastructure/kysely-outbox-writer.js';
@@ -27,7 +29,15 @@ import { LedgersController } from './presentation/ledgers.controller.js';
     CreateLedgerUseCase,
     GetLedgerUseCase,
     ListLedgersUseCase,
+    SaveLedgerMetadataUseCase,
+    DeleteLedgerMetadataUseCase,
   ],
-  exports: [CreateLedgerUseCase, GetLedgerUseCase, ListLedgersUseCase],
+  exports: [
+    CreateLedgerUseCase,
+    GetLedgerUseCase,
+    ListLedgersUseCase,
+    SaveLedgerMetadataUseCase,
+    DeleteLedgerMetadataUseCase,
+  ],
 })
 export class LedgersModule {}

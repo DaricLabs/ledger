@@ -8,8 +8,10 @@ import { ErrorsModule } from '../../core/errors/errors.module.js';
 import { ORGANIZATION_ID_HEADER } from '../../core/tenant/tenant.guard.js';
 import { ValidationModule } from '../../core/validation/validation.module.js';
 import { CreateLedgerUseCase } from '../application/use-cases/create-ledger.use-case.js';
+import { DeleteLedgerMetadataUseCase } from '../application/use-cases/delete-ledger-metadata.use-case.js';
 import { GetLedgerUseCase } from '../application/use-cases/get-ledger.use-case.js';
 import { ListLedgersUseCase } from '../application/use-cases/list-ledgers.use-case.js';
+import { SaveLedgerMetadataUseCase } from '../application/use-cases/save-ledger-metadata.use-case.js';
 import { InvalidLedgerMetadataError } from '../domain/invalid-ledger-metadata.error.js';
 import { InvalidLedgerNameError } from '../domain/invalid-ledger-name.error.js';
 import { LedgerAlreadyExistsError } from '../domain/ledger-already-exists.error.js';
@@ -25,6 +27,8 @@ describe('LedgersController', () => {
   const execute = vi.fn<CreateLedgerUseCase['execute']>();
   const executeGet = vi.fn<GetLedgerUseCase['execute']>();
   const executeList = vi.fn<ListLedgersUseCase['execute']>();
+  const executeSave = vi.fn<SaveLedgerMetadataUseCase['execute']>();
+  const executeDelete = vi.fn<DeleteLedgerMetadataUseCase['execute']>();
   const organizationId = randomUUIDv7();
   let app: INestApplication<App>;
 
@@ -40,6 +44,8 @@ describe('LedgersController', () => {
         { provide: CreateLedgerUseCase, useValue: { execute } },
         { provide: GetLedgerUseCase, useValue: { execute: executeGet } },
         { provide: ListLedgersUseCase, useValue: { execute: executeList } },
+        { provide: SaveLedgerMetadataUseCase, useValue: { execute: executeSave } },
+        { provide: DeleteLedgerMetadataUseCase, useValue: { execute: executeDelete } },
       ],
     }).compile();
     app = moduleRef.createNestApplication();
@@ -54,6 +60,8 @@ describe('LedgersController', () => {
     execute.mockReset();
     executeGet.mockReset();
     executeList.mockReset();
+    executeSave.mockReset();
+    executeDelete.mockReset();
     execute.mockImplementation(async (input) =>
       Ledger.create({
         id: randomUUIDv7(),
@@ -171,6 +179,8 @@ describe('LedgersController', () => {
         ['a metadata value is a number', { name: 'main', metadata: { n: 1 } }, 'metadata.n'],
         ['a metadata value is an object', { name: 'main', metadata: { o: {} } }, 'metadata.o'],
         ['a metadata value is null', { name: 'main', metadata: { n: null } }, 'metadata.n'],
+        // The path ends with a dot: it is the empty key after "metadata".
+        ['a metadata key is empty', { name: 'main', metadata: { '': 'x' } }, 'metadata.'],
         ['the body has an unknown field', { name: 'main', metdata: {} }, ''],
       ];
 
@@ -510,6 +520,270 @@ describe('LedgersController', () => {
         executeList.mockRejectedValue(new Error('connect ECONNREFUSED 10.0.0.5:5432'));
 
         const res = await list().expect(500);
+
+        expect(res.body).toEqual({ errorCode: 'INTERNAL', errorMessage: 'Internal server error' });
+      });
+    });
+  });
+  describe('POST /ledgers/:name/metadata', () => {
+    /** `org` is the header value. Pass `null` to send no header at all. */
+    const save = (name: string, body?: unknown, org: string | null = organizationId) => {
+      const req = request(app.getHttpServer()).post(`/ledgers/${name}/metadata`);
+      if (org !== null) req.set(ORGANIZATION_ID_HEADER, org);
+      return body === undefined ? req : req.send(body as object);
+    };
+
+    describe('success', () => {
+      beforeEach(() => {
+        executeSave.mockResolvedValue(undefined);
+      });
+
+      it('returns 204 with no body', async () => {
+        const res = await save('main', { env: 'prod' }).expect(204);
+
+        expect(res.body).toEqual({});
+        expect(res.text).toBe('');
+      });
+
+      it('gives the use case the organization of the header, the name of the URL and the body as metadata', async () => {
+        await save('main', { env: 'prod', team: 'payments' }).expect(204);
+
+        expect(executeSave).toHaveBeenCalledExactlyOnceWith({
+          organizationId,
+          name: 'main',
+          metadata: { env: 'prod', team: 'payments' },
+        });
+      });
+
+      it('accepts an empty string as a value', async () => {
+        await save('main', { env: '' }).expect(204);
+
+        expect(executeSave).toHaveBeenCalledWith(
+          expect.objectContaining({ metadata: { env: '' } }),
+        );
+      });
+
+      it('drops a "__proto__" key and does not pollute the object', async () => {
+        // Raw text on purpose: an object literal with `__proto__` would not make an own key.
+        await request(app.getHttpServer())
+          .post('/ledgers/main/metadata')
+          .set(ORGANIZATION_ID_HEADER, organizationId)
+          .set('Content-Type', 'application/json')
+          .send('{"__proto__":"x","env":"prod"}')
+          .expect(204);
+
+        const { metadata } = executeSave.mock.calls[0]![0];
+        expect(Object.keys(metadata)).toEqual(['env']);
+        expect(Object.getPrototypeOf(metadata)).toBe(Object.prototype);
+      });
+
+      it('gives the use case a lowercase organization id', async () => {
+        await save('main', { env: 'prod' }, organizationId.toUpperCase()).expect(204);
+
+        expect(executeSave).toHaveBeenCalledWith(expect.objectContaining({ organizationId }));
+      });
+    });
+
+    describe('tenant header', () => {
+      it('returns 400 INVALID_REQUEST when the header is missing', async () => {
+        const res = await save('main', { env: 'prod' }, null).expect(400);
+
+        expect(res.body.errorCode).toBe('INVALID_REQUEST');
+        expect(executeSave).not.toHaveBeenCalled();
+      });
+
+      it('checks the header before the name and the body', async () => {
+        const res = await save('Not-Valid', [], 'not-an-id').expect(400);
+
+        expect(res.body.errorCode).toBe('INVALID_REQUEST');
+      });
+    });
+
+    describe('validation', () => {
+      it.each([
+        ['has uppercase letters', 'Main'],
+        ['starts with "-"', '-main'],
+        ['is longer than 63 characters', 'a'.repeat(64)],
+      ])('returns 400 VALIDATION when the name %s', async (_title, name) => {
+        const res = await save(name, { env: 'prod' }).expect(400);
+
+        expect(res.body.errorCode).toBe('VALIDATION');
+        expect(executeSave).not.toHaveBeenCalled();
+      });
+
+      const invalidBodies: [string, unknown][] = [
+        ['the body is an empty object', {}],
+        ['the body is an array', ['a']],
+        ['a value is a number', { n: 1 }],
+        ['a value is a boolean', { b: true }],
+        ['a value is null', { n: null }],
+        ['a value is an object', { o: {} }],
+        ['a key is empty', { '': 'x' }],
+      ];
+
+      it.each(invalidBodies)('returns 400 VALIDATION when %s', async (_title, body) => {
+        const res = await save('main', body).expect(400);
+
+        expect(res.body.errorCode).toBe('VALIDATION');
+        expect(executeSave).not.toHaveBeenCalled();
+      });
+
+      it('returns 400 VALIDATION when the only key is "__proto__", because nothing is left', async () => {
+        const res = await request(app.getHttpServer())
+          .post('/ledgers/main/metadata')
+          .set(ORGANIZATION_ID_HEADER, organizationId)
+          .set('Content-Type', 'application/json')
+          .send('{"__proto__":"x"}')
+          .expect(400);
+
+        expect(res.body.errorCode).toBe('VALIDATION');
+        expect(executeSave).not.toHaveBeenCalled();
+      });
+
+      it('returns 400 VALIDATION when there is no body', async () => {
+        const res = await save('main').expect(400);
+
+        expect(res.body.errorCode).toBe('VALIDATION');
+        expect(executeSave).not.toHaveBeenCalled();
+      });
+
+      it('names the bad key in the details', async () => {
+        const res = await save('main', { ok: 'yes', n: 1 }).expect(400);
+
+        expect(res.body.details.map((d: { path: string }) => d.path)).toContain('n');
+      });
+
+      it('does not echo metadata values in the error', async () => {
+        const res = await save('main', { token: 12345678 }).expect(400);
+
+        expect(JSON.stringify(res.body)).not.toContain('12345678');
+      });
+    });
+
+    describe('errors', () => {
+      it('returns 404 LEDGER_NOT_FOUND when there is no such ledger', async () => {
+        executeSave.mockRejectedValue(new LedgerNotFoundError('main'));
+
+        const res = await save('main', { env: 'prod' }).expect(404);
+
+        expect(res.body).toEqual({
+          errorCode: 'LEDGER_NOT_FOUND',
+          errorMessage: 'Ledger "main" not found',
+        });
+      });
+
+      it('returns 400 INVALID_LEDGER_METADATA for metadata the domain refuses', async () => {
+        executeSave.mockRejectedValue(
+          new InvalidLedgerMetadataError('Metadata value for key "bad" must be a string'),
+        );
+
+        const res = await save('main', { env: 'prod' }).expect(400);
+
+        expect(res.body).toEqual({
+          errorCode: 'INVALID_LEDGER_METADATA',
+          errorMessage: 'Metadata value for key "bad" must be a string',
+        });
+      });
+
+      it('returns 500 INTERNAL, with no details, for an unknown error', async () => {
+        executeSave.mockRejectedValue(new Error('connect ECONNREFUSED 10.0.0.5:5432'));
+
+        const res = await save('main', { env: 'prod' }).expect(500);
+
+        expect(res.body).toEqual({ errorCode: 'INTERNAL', errorMessage: 'Internal server error' });
+      });
+    });
+  });
+
+  describe('DELETE /ledgers/:name/metadata/:key', () => {
+    /** `org` is the header value. Pass `null` to send no header at all. */
+    const remove = (name: string, key: string, org: string | null = organizationId) => {
+      const req = request(app.getHttpServer()).delete(`/ledgers/${name}/metadata/${key}`);
+      if (org !== null) req.set(ORGANIZATION_ID_HEADER, org);
+      return req;
+    };
+
+    describe('success', () => {
+      beforeEach(() => {
+        executeDelete.mockResolvedValue(undefined);
+      });
+
+      it('returns 204 with no body', async () => {
+        const res = await remove('main', 'env').expect(204);
+
+        expect(res.body).toEqual({});
+        expect(res.text).toBe('');
+      });
+
+      it('gives the use case the organization of the header, the name and the key of the URL', async () => {
+        await remove('main', 'env').expect(204);
+
+        expect(executeDelete).toHaveBeenCalledExactlyOnceWith({
+          organizationId,
+          name: 'main',
+          key: 'env',
+        });
+      });
+
+      it('decodes the key: spaces, slashes and non-ASCII letters work', async () => {
+        const key = 'team name/größe';
+
+        await remove('main', encodeURIComponent(key)).expect(204);
+
+        expect(executeDelete).toHaveBeenCalledWith(expect.objectContaining({ key }));
+      });
+
+      it('gives the use case a lowercase organization id', async () => {
+        await remove('main', 'env', organizationId.toUpperCase()).expect(204);
+
+        expect(executeDelete).toHaveBeenCalledWith(expect.objectContaining({ organizationId }));
+      });
+    });
+
+    describe('tenant header', () => {
+      it('returns 400 INVALID_REQUEST when the header is missing', async () => {
+        const res = await remove('main', 'env', null).expect(400);
+
+        expect(res.body.errorCode).toBe('INVALID_REQUEST');
+        expect(executeDelete).not.toHaveBeenCalled();
+      });
+
+      it('checks the header before the name', async () => {
+        const res = await remove('Not-Valid', 'env', 'not-an-id').expect(400);
+
+        expect(res.body.errorCode).toBe('INVALID_REQUEST');
+      });
+    });
+
+    describe('validation', () => {
+      it.each([
+        ['has uppercase letters', 'Main'],
+        ['starts with "-"', '-main'],
+        ['is longer than 63 characters', 'a'.repeat(64)],
+      ])('returns 400 VALIDATION when the name %s', async (_title, name) => {
+        const res = await remove(name, 'env').expect(400);
+
+        expect(res.body.errorCode).toBe('VALIDATION');
+        expect(executeDelete).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('errors', () => {
+      it('returns 404 LEDGER_NOT_FOUND when there is no such ledger', async () => {
+        executeDelete.mockRejectedValue(new LedgerNotFoundError('main'));
+
+        const res = await remove('main', 'env').expect(404);
+
+        expect(res.body).toEqual({
+          errorCode: 'LEDGER_NOT_FOUND',
+          errorMessage: 'Ledger "main" not found',
+        });
+      });
+
+      it('returns 500 INTERNAL, with no details, for an unknown error', async () => {
+        executeDelete.mockRejectedValue(new Error('connect ECONNREFUSED 10.0.0.5:5432'));
+
+        const res = await remove('main', 'env').expect(500);
 
         expect(res.body).toEqual({ errorCode: 'INTERNAL', errorMessage: 'Internal server error' });
       });

@@ -37,6 +37,8 @@ function setup() {
   const ledgers = {
     insert: vi.fn<ILedgerRepository['insert']>(),
     findByName: vi.fn<ILedgerRepository['findByName']>(),
+    findByNameForUpdate: vi.fn<ILedgerRepository['findByNameForUpdate']>(),
+    updateMetadata: vi.fn<ILedgerRepository['updateMetadata']>(),
     findPage: vi.fn<ILedgerRepository['findPage']>(async () => {
       calls.push('find');
       return storedPage;

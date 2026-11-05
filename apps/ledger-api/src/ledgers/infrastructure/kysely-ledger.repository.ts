@@ -52,6 +52,38 @@ export class KyselyLedgerRepository implements ILedgerRepository {
     return row === undefined ? null : toLedger(row);
   }
 
+  async findByNameForUpdate(trx: TenantTransaction, name: string): Promise<Ledger | null> {
+    // FOR NO KEY UPDATE and not FOR UPDATE, on purpose. We only change a
+    // column that is not a key, and this is the same lock that the log trigger
+    // takes when it bumps `last_log_seq`. The weaker lock does not block the
+    // foreign key checks of rows that other transactions add for this ledger.
+    const row = await unwrapTenantTransaction(trx)
+      .selectFrom('ledgers')
+      .select(LEDGER_COLUMNS)
+      .where('name', '=', name)
+      .forNoKeyUpdate()
+      .executeTakeFirst();
+
+    return row === undefined ? null : toLedger(row);
+  }
+
+  async updateMetadata(trx: TenantTransaction, ledger: Ledger): Promise<void> {
+    // Only `metadata` is written: it is the only column the runtime role may
+    // update, and the only part of a ledger that changes.
+    const result = await unwrapTenantTransaction(trx)
+      .updateTable('ledgers')
+      .set({ metadata: ledger.metadata })
+      .where('id', '=', ledger.id)
+      .executeTakeFirstOrThrow();
+
+    // Row-level security hides the rows of other organizations, so an update
+    // for one of them would change 0 rows without an error. Do not let that
+    // pass quietly.
+    if (result.numUpdatedRows !== 1n) {
+      throw new Error(`Expected to update 1 ledger row, but updated ${result.numUpdatedRows}`);
+    }
+  }
+
   async findPage(trx: TenantTransaction, query: ILedgerPageQuery): Promise<ILedgerPage> {
     // No `organization_id` filter here either (see `findByName`).
     let select = unwrapTenantTransaction(trx)
