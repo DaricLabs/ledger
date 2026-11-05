@@ -1,7 +1,7 @@
 import type { TenantTransaction } from '@ledger/database';
 
 /** Types of entries in the ledger journal (`ledger_logs.type`). */
-export type LedgerLogType = 'LEDGER_CREATED';
+export type LedgerLogType = 'LEDGER_CREATED' | 'LEDGER_METADATA_SAVED' | 'LEDGER_METADATA_DELETED';
 
 export interface ILedgerLogEntry {
   ledgerId: string;

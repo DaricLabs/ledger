@@ -40,6 +40,24 @@ export interface ILedgerRepository {
   findByName(trx: TenantTransaction, name: string): Promise<Ledger | null>;
 
   /**
+   * Like `findByName`, and it also locks the ledger row until the transaction
+   * ends. Use it when the caller reads a ledger to change it, so two changes
+   * at the same time run one after the other and none is lost.
+   *
+   * @returns `null` when there is no such ledger.
+   */
+  findByNameForUpdate(trx: TenantTransaction, name: string): Promise<Ledger | null>;
+
+  /**
+   * Saves the metadata of a ledger that was loaded in this transaction. The
+   * metadata is the only part of a ledger that can change.
+   *
+   * @throws Error If no ledger row was updated. The caller loaded the ledger
+   * in the same transaction, so this means a bug and not a user mistake.
+   */
+  updateMetadata(trx: TenantTransaction, ledger: Ledger): Promise<void>;
+
+  /**
    * Loads one page of the ledgers of the organization of the transaction,
    * sorted by name (ascending).
    *

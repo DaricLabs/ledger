@@ -37,6 +37,17 @@ describe('ledgers (e2e)', () => {
       .get(`/ledgers${query}`)
       .set(ORGANIZATION_ID_HEADER, organizationId);
 
+  const saveMetadata = (organizationId: string, name: string, body: object) =>
+    request(app.getHttpServer())
+      .post(`/ledgers/${name}/metadata`)
+      .set(ORGANIZATION_ID_HEADER, organizationId)
+      .send(body);
+
+  const deleteMetadata = (organizationId: string, name: string, key: string) =>
+    request(app.getHttpServer())
+      .delete(`/ledgers/${name}/metadata/${encodeURIComponent(key)}`)
+      .set(ORGANIZATION_ID_HEADER, organizationId);
+
   it('creates a ledger', async () => {
     const res = await createLedger(randomUUIDv7(), {
       name: 'main',
@@ -114,6 +125,153 @@ describe('ledgers (e2e)', () => {
     const res = await getLedger(randomUUIDv7(), 'Not-Valid').expect(400);
 
     expect(res.body.errorCode).toBe('VALIDATION');
+  });
+
+  describe('POST /ledgers/:name/metadata', () => {
+    it('adds keys, replaces the value of a key that is there, and keeps the other keys', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId, {
+        name: 'main',
+        metadata: { env: 'prod', team: 'payments' },
+      }).expect(201);
+
+      await saveMetadata(organizationId, 'main', { env: 'staging', tier: '1' }).expect(204);
+      const res = await getLedger(organizationId, 'main').expect(200);
+
+      expect(res.body.metadata).toEqual({ env: 'staging', team: 'payments', tier: '1' });
+    });
+
+    it('can be repeated with the same body', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId, { name: 'main' }).expect(201);
+
+      await saveMetadata(organizationId, 'main', { env: 'prod' }).expect(204);
+      await saveMetadata(organizationId, 'main', { env: 'prod' }).expect(204);
+      const res = await getLedger(organizationId, 'main').expect(200);
+
+      expect(res.body.metadata).toEqual({ env: 'prod' });
+    });
+
+    it('keeps keys with spaces, slashes and non-ASCII letters, and values with any text', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId, { name: 'main' }).expect(201);
+      const metadata = { 'team name/größe': 'Zürich ✓ "quoted" \\ 日本語', empty: '' };
+
+      await saveMetadata(organizationId, 'main', metadata).expect(204);
+      const res = await getLedger(organizationId, 'main').expect(200);
+
+      expect(res.body.metadata).toEqual(metadata);
+    });
+
+    it('returns 404 LEDGER_NOT_FOUND for a name the organization does not have', async () => {
+      const res = await saveMetadata(randomUUIDv7(), 'main', { env: 'prod' }).expect(404);
+
+      expect(res.body.errorCode).toBe('LEDGER_NOT_FOUND');
+    });
+
+    it('returns 404 LEDGER_NOT_FOUND for the ledger of another organization, and does not change it', async () => {
+      const owner = randomUUIDv7();
+      await createLedger(owner, { name: 'main', metadata: { env: 'prod' } }).expect(201);
+
+      const res = await saveMetadata(randomUUIDv7(), 'main', { env: 'hacked' }).expect(404);
+
+      expect(res.body.errorCode).toBe('LEDGER_NOT_FOUND');
+      const unchanged = await getLedger(owner, 'main').expect(200);
+      expect(unchanged.body.metadata).toEqual({ env: 'prod' });
+    });
+
+    it.each([
+      ['the body is empty', {}],
+      ['the body is an array', ['a']],
+      ['a value is not a string', { n: 1 }],
+      ['a key is empty', { '': 'x' }],
+    ])('returns 400 VALIDATION when %s', async (_title, body) => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId, { name: 'main' }).expect(201);
+
+      const res = await saveMetadata(organizationId, 'main', body).expect(400);
+
+      expect(res.body.errorCode).toBe('VALIDATION');
+    });
+
+    it('returns 400 VALIDATION for a name with a wrong shape', async () => {
+      const res = await saveMetadata(randomUUIDv7(), 'Not-Valid', { env: 'prod' }).expect(400);
+
+      expect(res.body.errorCode).toBe('VALIDATION');
+    });
+
+    it('returns 400 INVALID_REQUEST when the organization header is missing', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/ledgers/main/metadata')
+        .send({ env: 'prod' })
+        .expect(400);
+
+      expect(res.body.errorCode).toBe('INVALID_REQUEST');
+    });
+  });
+
+  describe('DELETE /ledgers/:name/metadata/:key', () => {
+    it('removes the key and keeps the other keys', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId, {
+        name: 'main',
+        metadata: { env: 'prod', team: 'payments' },
+      }).expect(201);
+
+      await deleteMetadata(organizationId, 'main', 'env').expect(204);
+      const res = await getLedger(organizationId, 'main').expect(200);
+
+      expect(res.body.metadata).toEqual({ team: 'payments' });
+    });
+
+    it('removes a key with spaces, slashes and non-ASCII letters', async () => {
+      const organizationId = randomUUIDv7();
+      const key = 'team name/größe';
+      await createLedger(organizationId, {
+        name: 'main',
+        metadata: { [key]: 'x', env: 'prod' },
+      }).expect(201);
+
+      await deleteMetadata(organizationId, 'main', key).expect(204);
+      const res = await getLedger(organizationId, 'main').expect(200);
+
+      expect(res.body.metadata).toEqual({ env: 'prod' });
+    });
+
+    it('returns 204 for a key that is not there, so it can be repeated', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId, { name: 'main', metadata: { env: 'prod' } }).expect(201);
+
+      await deleteMetadata(organizationId, 'main', 'env').expect(204);
+      await deleteMetadata(organizationId, 'main', 'env').expect(204);
+      await deleteMetadata(organizationId, 'main', 'never-there').expect(204);
+      const res = await getLedger(organizationId, 'main').expect(200);
+
+      expect(res.body.metadata).toEqual({});
+    });
+
+    it('returns 404 LEDGER_NOT_FOUND for a name the organization does not have', async () => {
+      const res = await deleteMetadata(randomUUIDv7(), 'main', 'env').expect(404);
+
+      expect(res.body.errorCode).toBe('LEDGER_NOT_FOUND');
+    });
+
+    it('returns 404 LEDGER_NOT_FOUND for the ledger of another organization, and does not change it', async () => {
+      const owner = randomUUIDv7();
+      await createLedger(owner, { name: 'main', metadata: { env: 'prod' } }).expect(201);
+
+      const res = await deleteMetadata(randomUUIDv7(), 'main', 'env').expect(404);
+
+      expect(res.body.errorCode).toBe('LEDGER_NOT_FOUND');
+      const unchanged = await getLedger(owner, 'main').expect(200);
+      expect(unchanged.body.metadata).toEqual({ env: 'prod' });
+    });
+
+    it('returns 400 VALIDATION for a name with a wrong shape', async () => {
+      const res = await deleteMetadata(randomUUIDv7(), 'Not-Valid', 'env').expect(400);
+
+      expect(res.body.errorCode).toBe('VALIDATION');
+    });
   });
 
   describe('GET /ledgers', () => {
