@@ -10,7 +10,7 @@ import type { ILedgerPage, ILedgerPageQuery } from '../application/ports/ledger-
 import { LedgerAlreadyExistsError } from '../domain/ledger-already-exists.error.js';
 import { Ledger } from '../domain/ledger.entity.js';
 import { KyselyLedgerRepository } from './kysely-ledger.repository.js';
-import { Uuidv7IdGenerator } from './uuidv7-id-generator.js';
+import { Uuidv7IdGenerator } from '../../ids/infrastructure/uuidv7-id-generator.js';
 
 // The repository has no constructor arguments, so these tests do not need Nest.
 // Every test uses a new organization id, so tests never see each other's rows.

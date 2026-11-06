@@ -7,7 +7,7 @@ import {
 import {
   TENANT_TRANSACTION_RUNNER,
   type ITenantTransactionRunner,
-} from '../ports/tenant-transaction-runner.port.js';
+} from '../../../journal/application/ports/tenant-transaction-runner.port.js';
 
 export interface IListLedgersInput {
   organizationId: string;

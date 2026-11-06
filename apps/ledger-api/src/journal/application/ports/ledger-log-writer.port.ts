@@ -1,11 +1,22 @@
 import type { TenantTransaction } from '@ledger/database';
 
-/** Types of entries in the ledger journal (`ledger_logs.type`). */
-export type LedgerLogType = 'LEDGER_CREATED' | 'LEDGER_METADATA_SAVED' | 'LEDGER_METADATA_DELETED';
-
 export interface ILedgerLogEntry {
   ledgerId: string;
-  type: LedgerLogType;
+  /**
+   * What happened, in `UPPER_SNAKE_CASE`, 3 to 64 characters (the database
+   * refuses anything else). It is part of the public journal, so add new
+   * types freely and never rename one.
+   *
+   * Each feature keeps its own list of types, like `LEDGER_LOG_TYPE` in the
+   * ledgers feature. This port does not know them.
+   */
+  type: string;
+  /**
+   * The transaction this entry is about, if any. The transaction row must
+   * already exist in the same database transaction (foreign key). Leave it out
+   * for entries that are not about a transaction, like ledger changes.
+   */
+  transactionId?: string;
   /** Stored as a JSON object. Must not contain secrets. */
   payload: Record<string, unknown>;
 }

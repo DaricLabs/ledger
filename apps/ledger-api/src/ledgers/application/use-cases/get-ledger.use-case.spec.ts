@@ -2,7 +2,7 @@ import type { TenantTransaction } from '@ledger/database';
 import { Ledger } from '../../domain/ledger.entity.js';
 import { LedgerNotFoundError } from '../../domain/ledger-not-found.error.js';
 import type { ILedgerRepository } from '../ports/ledger-repository.port.js';
-import type { ITenantTransactionRunner } from '../ports/tenant-transaction-runner.port.js';
+import type { ITenantTransactionRunner } from '../../../journal/application/ports/tenant-transaction-runner.port.js';
 import { GetLedgerUseCase } from './get-ledger.use-case.js';
 
 const ORG_ID = '0190a5d4-7b3c-7abc-8def-0123456789ab';
