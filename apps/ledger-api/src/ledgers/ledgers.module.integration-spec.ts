@@ -4,7 +4,7 @@ import { LoggerModule } from 'nestjs-pino';
 import type { INestApplication } from '@nestjs/common';
 import { unwrapTenantTransaction, withTenant, type LedgerDatabase } from '@ledger/database/storage';
 import { KYSELY_DB } from '../core/database/database.tokens.js';
-import { LEDGER_LOG_WRITER } from './application/ports/ledger-log-writer.port.js';
+import { LEDGER_LOG_WRITER } from '../journal/application/ports/ledger-log-writer.port.js';
 import { CreateLedgerUseCase } from './application/use-cases/create-ledger.use-case.js';
 import { DeleteLedgerMetadataUseCase } from './application/use-cases/delete-ledger-metadata.use-case.js';
 import { GetLedgerUseCase } from './application/use-cases/get-ledger.use-case.js';
@@ -12,7 +12,7 @@ import { ListLedgersUseCase } from './application/use-cases/list-ledgers.use-cas
 import { SaveLedgerMetadataUseCase } from './application/use-cases/save-ledger-metadata.use-case.js';
 import { LedgerAlreadyExistsError } from './domain/ledger-already-exists.error.js';
 import { LedgerNotFoundError } from './domain/ledger-not-found.error.js';
-import { Uuidv7IdGenerator } from './infrastructure/uuidv7-id-generator.js';
+import { Uuidv7IdGenerator } from '../ids/infrastructure/uuidv7-id-generator.js';
 import { LedgersModule } from './ledgers.module.js';
 
 // Every test uses new organization ids, so tests never see each other's rows

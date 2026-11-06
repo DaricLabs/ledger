@@ -1,12 +1,19 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { LEDGER_LOG_TYPE } from '../../domain/ledger-log-type.js';
 import { LedgerNotFoundError } from '../../domain/ledger-not-found.error.js';
 import { LEDGER_REPOSITORY, type ILedgerRepository } from '../ports/ledger-repository.port.js';
-import { LEDGER_LOG_WRITER, type ILedgerLogWriter } from '../ports/ledger-log-writer.port.js';
-import { OUTBOX_WRITER, type IOutboxWriter } from '../ports/outbox-writer.port.js';
+import {
+  LEDGER_LOG_WRITER,
+  type ILedgerLogWriter,
+} from '../../../journal/application/ports/ledger-log-writer.port.js';
+import {
+  OUTBOX_WRITER,
+  type IOutboxWriter,
+} from '../../../journal/application/ports/outbox-writer.port.js';
 import {
   TENANT_TRANSACTION_RUNNER,
   type ITenantTransactionRunner,
-} from '../ports/tenant-transaction-runner.port.js';
+} from '../../../journal/application/ports/tenant-transaction-runner.port.js';
 
 export interface IDeleteLedgerMetadataInput {
   organizationId: string;
@@ -54,7 +61,7 @@ export class DeleteLedgerMetadataUseCase {
       await this.ledgers.updateMetadata(trx, updated);
       await this.logs.append(trx, {
         ledgerId: ledger.id,
-        type: 'LEDGER_METADATA_DELETED',
+        type: LEDGER_LOG_TYPE.METADATA_DELETED,
         payload: { key: input.key },
       });
       await this.outbox.append(trx, {

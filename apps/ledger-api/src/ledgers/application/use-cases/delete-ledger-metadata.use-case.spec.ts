@@ -1,10 +1,10 @@
 import type { TenantTransaction } from '@ledger/database';
 import { LedgerNotFoundError } from '../../domain/ledger-not-found.error.js';
 import { Ledger } from '../../domain/ledger.entity.js';
-import type { ILedgerLogWriter } from '../ports/ledger-log-writer.port.js';
+import type { ILedgerLogWriter } from '../../../journal/application/ports/ledger-log-writer.port.js';
 import type { ILedgerRepository } from '../ports/ledger-repository.port.js';
-import type { IOutboxWriter } from '../ports/outbox-writer.port.js';
-import type { ITenantTransactionRunner } from '../ports/tenant-transaction-runner.port.js';
+import type { IOutboxWriter } from '../../../journal/application/ports/outbox-writer.port.js';
+import type { ITenantTransactionRunner } from '../../../journal/application/ports/tenant-transaction-runner.port.js';
 import { DeleteLedgerMetadataUseCase } from './delete-ledger-metadata.use-case.js';
 
 const ORG_ID = '0190a5d4-7b3c-7abc-8def-0123456789ab';

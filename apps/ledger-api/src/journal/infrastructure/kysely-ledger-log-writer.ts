@@ -19,6 +19,7 @@ export class KyselyLedgerLogWriter implements ILedgerLogWriter {
         // No default exists, so this is NULL for a moment. The BEFORE INSERT
         // trigger sets the real, gap-free seq before NOT NULL is checked.
         seq: sql<string>`default`,
+        transaction_id: entry.transactionId ?? null,
         type: entry.type,
         payload: JSON.stringify(entry.payload), // Postgres parses the text as jsonb
       })

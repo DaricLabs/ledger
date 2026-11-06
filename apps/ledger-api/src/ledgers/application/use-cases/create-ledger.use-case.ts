@@ -1,13 +1,23 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { LEDGER_LOG_TYPE } from '../../domain/ledger-log-type.js';
 import { Ledger } from '../../domain/ledger.entity.js';
-import { ID_GENERATOR, type IIdGenerator } from '../ports/id-generator.port.js';
+import {
+  ID_GENERATOR,
+  type IIdGenerator,
+} from '../../../ids/application/ports/id-generator.port.js';
 import { LEDGER_REPOSITORY, type ILedgerRepository } from '../ports/ledger-repository.port.js';
-import { LEDGER_LOG_WRITER, type ILedgerLogWriter } from '../ports/ledger-log-writer.port.js';
-import { OUTBOX_WRITER, type IOutboxWriter } from '../ports/outbox-writer.port.js';
+import {
+  LEDGER_LOG_WRITER,
+  type ILedgerLogWriter,
+} from '../../../journal/application/ports/ledger-log-writer.port.js';
+import {
+  OUTBOX_WRITER,
+  type IOutboxWriter,
+} from '../../../journal/application/ports/outbox-writer.port.js';
 import {
   TENANT_TRANSACTION_RUNNER,
   type ITenantTransactionRunner,
-} from '../ports/tenant-transaction-runner.port.js';
+} from '../../../journal/application/ports/tenant-transaction-runner.port.js';
 
 export interface ICreateLedgerInput {
   organizationId: string;
@@ -52,7 +62,7 @@ export class CreateLedgerUseCase {
       await this.ledgers.insert(trx, ledger);
       await this.logs.append(trx, {
         ledgerId: ledger.id,
-        type: 'LEDGER_CREATED',
+        type: LEDGER_LOG_TYPE.CREATED,
         payload: { name: ledger.name, metadata: ledger.metadata },
       });
       await this.outbox.append(trx, {
