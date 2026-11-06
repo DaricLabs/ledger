@@ -62,8 +62,9 @@ export class LedgersController {
    * Creates a ledger in the organization of the `X-Organization-Id` header.
    *
    * - `201`: the ledger was created. The `Location` header is its URL.
-   * - `400`: `VALIDATION` (bad shape), `INVALID_LEDGER_NAME` (reserved name)
-   *   or `INVALID_LEDGER_METADATA`.
+   * - `400`: `VALIDATION` (bad shape), `INVALID_LEDGER_NAME` (reserved name),
+   *   `INVALID_LEDGER_METADATA` or `LEDGER_METADATA_LIMIT_EXCEEDED` (metadata is
+   *   too big).
    * - `409`: `LEDGER_ALREADY_EXISTS` (the organization already uses this name).
    */
   @Post()
@@ -132,7 +133,9 @@ export class LedgersController {
    *
    * - `204`: the metadata is saved (or was already like this).
    * - `400`: `VALIDATION` (the name has a wrong shape, the body is not an
-   *   object of strings, a key is empty, or there is no key at all).
+   *   object of strings, a key is empty, or there is no key at all) or
+   *   `LEDGER_METADATA_LIMIT_EXCEEDED` (the ledger would have too many keys, or
+   *   a key, a value or the total would be too big).
    * - `404`: `LEDGER_NOT_FOUND` (no such ledger in this organization).
    */
   @Post(':name/metadata')

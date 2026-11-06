@@ -210,6 +210,86 @@ describe('ledgers (e2e)', () => {
     });
   });
 
+  describe('metadata size limits', () => {
+    /** `count` entries with short keys and empty values. */
+    const entries = (count: number) =>
+      Object.fromEntries(Array.from({ length: count }, (_, index) => [`k${index}`, '']));
+
+    it('creates a ledger with the most entries, and refuses one more with 400 LEDGER_METADATA_LIMIT_EXCEEDED', async () => {
+      await createLedger(randomUUIDv7(), { name: 'main', metadata: entries(128) }).expect(201);
+
+      const res = await createLedger(randomUUIDv7(), {
+        name: 'main',
+        metadata: entries(129),
+      }).expect(400);
+
+      expect(res.body.errorCode).toBe('LEDGER_METADATA_LIMIT_EXCEEDED');
+    });
+
+    it('accepts a value of 16 KiB and refuses a longer one', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId, { name: 'main' }).expect(201);
+
+      await saveMetadata(organizationId, 'main', { a: 'v'.repeat(16 * 1024) }).expect(204);
+      const res = await saveMetadata(organizationId, 'main', {
+        b: 'v'.repeat(16 * 1024 + 1),
+      }).expect(400);
+
+      expect(res.body.errorCode).toBe('LEDGER_METADATA_LIMIT_EXCEEDED');
+    });
+
+    it('counts what is already stored, so many small saves cannot pass the limit', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId, { name: 'main', metadata: entries(128) }).expect(201);
+
+      const res = await saveMetadata(organizationId, 'main', { extra: 'x' }).expect(400);
+
+      expect(res.body.errorCode).toBe('LEDGER_METADATA_LIMIT_EXCEEDED');
+      const unchanged = await getLedger(organizationId, 'main').expect(200);
+      expect(Object.keys(unchanged.body.metadata)).toHaveLength(128);
+    });
+
+    it('still lets a client replace a value on a full ledger, and delete a key to make room', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId, { name: 'main', metadata: entries(128) }).expect(201);
+
+      await saveMetadata(organizationId, 'main', { k0: 'changed' }).expect(204);
+      await deleteMetadata(organizationId, 'main', 'k1').expect(204);
+      await saveMetadata(organizationId, 'main', { extra: 'x' }).expect(204);
+      const res = await getLedger(organizationId, 'main').expect(200);
+
+      expect(res.body.metadata.k0).toBe('changed');
+      expect(res.body.metadata.extra).toBe('x');
+      expect(res.body.metadata).not.toHaveProperty('k1');
+    });
+
+    it('refuses a total that is too big, and keeps the ledger as it was', async () => {
+      const organizationId = randomUUIDv7();
+      const value = 'v'.repeat(16 * 1024 - 1);
+      await createLedger(organizationId, {
+        name: 'main',
+        metadata: { a: value, b: value, c: value, d: value },
+      }).expect(201);
+
+      const res = await saveMetadata(organizationId, 'main', { e: '' }).expect(400);
+
+      expect(res.body.errorCode).toBe('LEDGER_METADATA_LIMIT_EXCEEDED');
+      const unchanged = await getLedger(organizationId, 'main').expect(200);
+      expect(Object.keys(unchanged.body.metadata)).toEqual(['a', 'b', 'c', 'd']);
+    });
+
+    it('does not repeat metadata values in the error', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId, { name: 'main' }).expect(201);
+
+      const res = await saveMetadata(organizationId, 'main', {
+        token: 'hunter2'.repeat(3000),
+      }).expect(400);
+
+      expect(JSON.stringify(res.body)).not.toContain('hunter2');
+    });
+  });
+
   describe('DELETE /ledgers/:name/metadata/:key', () => {
     it('removes the key and keeps the other keys', async () => {
       const organizationId = randomUUIDv7();

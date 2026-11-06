@@ -16,6 +16,7 @@ import { InvalidLedgerMetadataError } from '../domain/invalid-ledger-metadata.er
 import { InvalidLedgerNameError } from '../domain/invalid-ledger-name.error.js';
 import { LedgerAlreadyExistsError } from '../domain/ledger-already-exists.error.js';
 import { LedgerDomainError } from '../domain/ledger-domain.error.js';
+import { LedgerMetadataLimitExceededError } from '../domain/ledger-metadata-limit-exceeded.error.js';
 import { LedgerNotFoundError } from '../domain/ledger-not-found.error.js';
 import { Ledger } from '../domain/ledger.entity.js';
 import { encodeLedgerCursor } from './dto/ledger-page-cursor.dto.js';
@@ -226,6 +227,17 @@ describe('LedgersController', () => {
         expect(res.body).toEqual({
           errorCode: 'INVALID_LEDGER_METADATA',
           errorMessage: 'Metadata must be an object',
+        });
+      });
+
+      it('returns 400 LEDGER_METADATA_LIMIT_EXCEEDED for metadata that is too big', async () => {
+        execute.mockRejectedValue(new LedgerMetadataLimitExceededError('entries', 128));
+
+        const res = await post({ name: 'main' }).expect(400);
+
+        expect(res.body).toEqual({
+          errorCode: 'LEDGER_METADATA_LIMIT_EXCEEDED',
+          errorMessage: 'Metadata can have at most 128 entries',
         });
       });
 
@@ -682,6 +694,17 @@ describe('LedgersController', () => {
         expect(res.body).toEqual({
           errorCode: 'INVALID_LEDGER_METADATA',
           errorMessage: 'Metadata value for key "bad" must be a string',
+        });
+      });
+
+      it('returns 400 LEDGER_METADATA_LIMIT_EXCEEDED for metadata that is too big', async () => {
+        executeSave.mockRejectedValue(new LedgerMetadataLimitExceededError('total', 65536));
+
+        const res = await save('main', { env: 'prod' }).expect(400);
+
+        expect(res.body).toEqual({
+          errorCode: 'LEDGER_METADATA_LIMIT_EXCEEDED',
+          errorMessage: 'Metadata can be at most 65536 bytes in total (keys and values together)',
         });
       });
 

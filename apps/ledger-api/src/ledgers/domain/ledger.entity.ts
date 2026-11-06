@@ -1,9 +1,37 @@
 import { InvalidLedgerMetadataError } from './invalid-ledger-metadata.error.js';
 import { InvalidLedgerNameError } from './invalid-ledger-name.error.js';
+import { LedgerMetadataLimitExceededError } from './ledger-metadata-limit-exceeded.error.js';
 import { LEDGER_NAME_PATTERN, RESERVED_LEDGER_NAMES } from './ledger-name.js';
 
 /** Free-form key/value pairs on a ledger. Every value is a string. */
 export type LedgerMetadata = Readonly<Record<string, string>>;
+
+/**
+ * Size limits of ledger metadata. Sizes are in bytes of UTF-8 text, not
+ * in characters: a letter like "a" is 1 byte, but an emoji is 4 bytes.
+ *
+ * The numbers are conservative defaults. They keep metadata small enough to
+ * read by eye (128 keys of up to 256 bytes), and big enough for a JSON text
+ * or a signature in one value (16 KiB). The total bounds what every
+ * `GET /ledgers` response, log entry and outbox event can carry.
+ *
+ * We count not only what one command carries but also what is stored: a
+ * ledger is saved under a row lock, so we know the whole metadata when we
+ * check it, and many small saves cannot grow it without end.
+ *
+ * Limits are part of the public API. Making one bigger is safe. Making one
+ * smaller can break clients that work today.
+ */
+export const LEDGER_METADATA_LIMITS = Object.freeze({
+  /** Most keys one ledger can have. */
+  maxEntries: 128,
+  /** Longest key. */
+  maxKeyBytes: 256,
+  /** Longest value. */
+  maxValueBytes: 16 * 1024,
+  /** All keys and all values of one ledger, added together. */
+  maxTotalBytes: 64 * 1024,
+});
 
 /** The data a ledger is made of. */
 export interface LedgerProps {
@@ -45,10 +73,12 @@ export class Ledger {
    *
    * @throws {InvalidLedgerNameError} If the name has a wrong shape or is reserved.
    * @throws {InvalidLedgerMetadataError} If metadata is not an object, has an empty key, or has a non-string value.
+   * @throws {LedgerMetadataLimitExceededError} If metadata is bigger than `LEDGER_METADATA_LIMITS` allow.
    */
   static create(props: LedgerProps): Ledger {
     assertValidName(props.name);
     assertValidMetadata(props.metadata);
+    assertMetadataWithinLimits(props.metadata, props.metadata);
     return new Ledger(snapshot(props));
   }
 
@@ -56,8 +86,8 @@ export class Ledger {
    * Rebuilds a ledger that was already saved. It trusts storage and does not
    * check the creation rules.
    *
-   * This is on purpose: if a name is reserved later, ledgers that already use
-   * it must still load.
+   * This is on purpose: if a name is reserved or a limit gets smaller later,
+   * ledgers that already exist must still load.
    */
   static reconstitute(props: LedgerProps): Ledger {
     return new Ledger(snapshot(props));
@@ -94,6 +124,13 @@ export class Ledger {
    *
    * @throws {InvalidLedgerMetadataError} If `changes` is not an object, has an
    * empty key, or has a non-string value.
+   * @throws {LedgerMetadataLimitExceededError} If a key or a value of `changes`
+   * is too long, or the metadata after the change would have too many keys or
+   * be too big. Only the entries of `changes` are checked one by one, so an old
+   * long key or value that is already stored does not block a change. The
+   * number of keys and the total size are checked on the whole result, so a
+   * ledger that is over one of them must get smaller first (see
+   * `withoutMetadataKey`).
    */
   withMetadata(changes: LedgerMetadata): Ledger {
     assertValidMetadata(changes);
@@ -104,7 +141,9 @@ export class Ledger {
     if (unchanged) {
       return this;
     }
-    return new Ledger(snapshot({ ...this.props, metadata: { ...current, ...changes } }));
+    const merged = { ...current, ...changes };
+    assertMetadataWithinLimits(changes, merged);
+    return new Ledger(snapshot({ ...this.props, metadata: merged }));
   }
 
   /**
@@ -113,6 +152,8 @@ export class Ledger {
    * Returns this same instance when the key is not there, so the caller can
    * compare with `===` and skip the save. Deleting a key that does not exist
    * is not an error.
+   *
+   * It never checks the limits: removing a key only makes metadata smaller.
    */
   withoutMetadataKey(key: string): Ledger {
     if (!Object.hasOwn(this.props.metadata, key)) {
@@ -163,4 +204,43 @@ function assertValidMetadata(metadata: unknown): void {
       throw new InvalidLedgerMetadataError(`Metadata value for key "${key}" must be a string`);
     }
   }
+}
+
+/**
+ * Checks the size limits of metadata that is being written.
+ *
+ * `entries` are the keys and values this write brings. Each one is checked
+ * alone (key length, value length). `result` is all the metadata the ledger
+ * will have after the write, and it is checked as a whole (number of keys,
+ * total size). On create, both are the same object.
+ *
+ * It expects metadata that already passed `assertValidMetadata`. The order is
+ * fixed, so the same input always gives the same error: too many keys, then a
+ * key that is too long, then a value that is too long, then the total.
+ */
+function assertMetadataWithinLimits(entries: LedgerMetadata, result: LedgerMetadata): void {
+  const limits = LEDGER_METADATA_LIMITS;
+  if (Object.keys(result).length > limits.maxEntries) {
+    throw new LedgerMetadataLimitExceededError('entries', limits.maxEntries);
+  }
+  for (const [key, value] of Object.entries(entries)) {
+    if (utf8Length(key) > limits.maxKeyBytes) {
+      throw new LedgerMetadataLimitExceededError('key', limits.maxKeyBytes);
+    }
+    if (utf8Length(value) > limits.maxValueBytes) {
+      throw new LedgerMetadataLimitExceededError('value', limits.maxValueBytes, key);
+    }
+  }
+  let total = 0;
+  for (const [key, value] of Object.entries(result)) {
+    total += utf8Length(key) + utf8Length(value);
+  }
+  if (total > limits.maxTotalBytes) {
+    throw new LedgerMetadataLimitExceededError('total', limits.maxTotalBytes);
+  }
+}
+
+/** The size of a text in bytes when it is saved as UTF-8 (JSON in the database is UTF-8). */
+function utf8Length(text: string): number {
+  return Buffer.byteLength(text, 'utf8');
 }

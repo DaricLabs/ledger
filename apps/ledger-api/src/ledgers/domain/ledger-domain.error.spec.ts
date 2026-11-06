@@ -3,6 +3,7 @@ import { InvalidLedgerMetadataError } from './invalid-ledger-metadata.error.js';
 import { InvalidLedgerNameError } from './invalid-ledger-name.error.js';
 import { LedgerAlreadyExistsError } from './ledger-already-exists.error.js';
 import { LedgerDomainError } from './ledger-domain.error.js';
+import { LedgerMetadataLimitExceededError } from './ledger-metadata-limit-exceeded.error.js';
 
 // The codes are public API: clients switch on them. If a code in this table
 // has to change, it is a breaking change, not a refactor.
@@ -14,6 +15,11 @@ const ledgerErrors: [string, () => LedgerDomainError, string][] = [
     'INVALID_LEDGER_METADATA',
   ],
   ['LedgerAlreadyExistsError', () => new LedgerAlreadyExistsError('main'), 'LEDGER_ALREADY_EXISTS'],
+  [
+    'LedgerMetadataLimitExceededError',
+    () => new LedgerMetadataLimitExceededError('entries', 128),
+    'LEDGER_METADATA_LIMIT_EXCEEDED',
+  ],
 ];
 
 describe('ledger errors', () => {
