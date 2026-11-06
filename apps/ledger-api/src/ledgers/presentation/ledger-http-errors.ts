@@ -3,6 +3,7 @@ import { InvalidLedgerMetadataError } from '../domain/invalid-ledger-metadata.er
 import { InvalidLedgerNameError } from '../domain/invalid-ledger-name.error.js';
 import { LedgerAlreadyExistsError } from '../domain/ledger-already-exists.error.js';
 import type { LedgerDomainError } from '../domain/ledger-domain.error.js';
+import { LedgerMetadataLimitExceededError } from '../domain/ledger-metadata-limit-exceeded.error.js';
 import { LedgerNotFoundError } from '../domain/ledger-not-found.error.js';
 
 /**
@@ -11,8 +12,8 @@ import { LedgerNotFoundError } from '../domain/ledger-not-found.error.js';
  *
  * The error already knows its `code` (the domain owns it), so this file only
  * decides the HTTP status. The domain messages are safe for clients: they
- * never contain metadata values, and a ledger name in a message has already
- * passed the name pattern.
+ * never contain metadata values, a metadata key only after it passed the key
+ * limit, and a ledger name in a message has already passed the name pattern.
  */
 export function toLedgerHttpException(error: LedgerDomainError): HttpException {
   return new HttpException(error.message, statusOf(error), { errorCode: error.code });
@@ -25,7 +26,11 @@ function statusOf(error: LedgerDomainError): HttpStatus {
   if (error instanceof LedgerAlreadyExistsError) {
     return HttpStatus.CONFLICT;
   }
-  if (error instanceof InvalidLedgerNameError || error instanceof InvalidLedgerMetadataError) {
+  if (
+    error instanceof InvalidLedgerNameError ||
+    error instanceof InvalidLedgerMetadataError ||
+    error instanceof LedgerMetadataLimitExceededError
+  ) {
     return HttpStatus.BAD_REQUEST;
   }
   // A ledger error that has no status yet. A 500 is the safe answer: the core

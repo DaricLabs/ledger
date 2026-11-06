@@ -4,6 +4,7 @@ import type { ILedgerLogWriter } from '../ports/ledger-log-writer.port.js';
 import type { IOutboxWriter } from '../ports/outbox-writer.port.js';
 import type { ITenantTransactionRunner } from '../ports/tenant-transaction-runner.port.js';
 import { InvalidLedgerNameError } from '../../domain/invalid-ledger-name.error.js';
+import { LedgerMetadataLimitExceededError } from '../../domain/ledger-metadata-limit-exceeded.error.js';
 import { CreateLedgerUseCase } from './create-ledger.use-case.js';
 
 const ORG_ID = '0190a5d4-7b3c-7abc-8def-0123456789ab';
@@ -152,6 +153,16 @@ describe('CreateLedgerUseCase', () => {
 
     await expect(useCase.execute({ ...input, name: 'Not Valid' })).rejects.toThrow(
       InvalidLedgerNameError,
+    );
+    expect(transactions.run).not.toHaveBeenCalled();
+  });
+
+  it('rejects metadata that is too big before it opens a transaction', async () => {
+    const { useCase, transactions } = setup();
+    const metadata = { big: 'x'.repeat(16 * 1024 + 1) };
+
+    await expect(useCase.execute({ ...input, metadata })).rejects.toThrow(
+      LedgerMetadataLimitExceededError,
     );
     expect(transactions.run).not.toHaveBeenCalled();
   });

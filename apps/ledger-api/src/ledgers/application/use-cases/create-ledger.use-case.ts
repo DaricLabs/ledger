@@ -24,7 +24,8 @@ export interface ICreateLedgerInput {
  *
  * The domain checks the name and metadata before any transaction is opened.
  * Domain errors (`InvalidLedgerNameError`, `InvalidLedgerMetadataError`,
- * `LedgerAlreadyExistsError`) pass through unchanged. The presentation layer
+ * `LedgerMetadataLimitExceededError`, `LedgerAlreadyExistsError`) pass through
+ * unchanged. The presentation layer
  * turns them into HTTP responses.
  */
 @Injectable()

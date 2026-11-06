@@ -1,5 +1,6 @@
 import type { TenantTransaction } from '@ledger/database';
 import { InvalidLedgerMetadataError } from '../../domain/invalid-ledger-metadata.error.js';
+import { LedgerMetadataLimitExceededError } from '../../domain/ledger-metadata-limit-exceeded.error.js';
 import { LedgerNotFoundError } from '../../domain/ledger-not-found.error.js';
 import { Ledger } from '../../domain/ledger.entity.js';
 import type { ILedgerLogWriter } from '../ports/ledger-log-writer.port.js';
@@ -176,6 +177,18 @@ describe('SaveLedgerMetadataUseCase', () => {
 
     await expect(useCase.execute({ ...input, metadata })).rejects.toBeInstanceOf(
       InvalidLedgerMetadataError,
+    );
+    expect(ledgers.updateMetadata).not.toHaveBeenCalled();
+    expect(logs.append).not.toHaveBeenCalled();
+    expect(outbox.append).not.toHaveBeenCalled();
+  });
+
+  it('throws LedgerMetadataLimitExceededError when the result is too big, and writes nothing', async () => {
+    const { useCase, ledgers, logs, outbox } = setup();
+    const metadata = { big: 'x'.repeat(16 * 1024 + 1) };
+
+    await expect(useCase.execute({ ...input, metadata })).rejects.toBeInstanceOf(
+      LedgerMetadataLimitExceededError,
     );
     expect(ledgers.updateMetadata).not.toHaveBeenCalled();
     expect(logs.append).not.toHaveBeenCalled();
