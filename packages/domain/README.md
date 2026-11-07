@@ -5,9 +5,13 @@ TypeScript: no framework, no database, no HTTP.
 
 ## What is inside
 
-| File              | Job                                                                       |
-| :---------------- | :------------------------------------------------------------------------ |
-| `domain-error.ts` | `DomainError`: base class of every business error, with a required `code` |
+| File                    | Job                                                                                        |
+| :---------------------- | :----------------------------------------------------------------------------------------- |
+| `domain-error.ts`       | `DomainError`: base class of every business error, with a required `code`                  |
+| `value-object-error.ts` | `ValueObjectError`: base class of the errors of the value objects below                    |
+| `asset-code.ts`         | `AssetCode`: a valid asset code, like `USD`                                                |
+| `account-address.ts`    | `AccountAddress`: a valid account address, like `users:42:main`, and the `world` address   |
+| `money.ts`              | `Money`: an exact amount (`bigint`) of one asset, within the range of the database columns |
 
 ## Rules
 
