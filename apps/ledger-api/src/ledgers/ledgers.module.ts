@@ -22,6 +22,8 @@ import { LedgersController } from './presentation/ledgers.controller.js';
     DeleteLedgerMetadataUseCase,
   ],
   exports: [
+    // Other features that work inside a ledger (like transactions) find it by name.
+    LEDGER_REPOSITORY,
     CreateLedgerUseCase,
     GetLedgerUseCase,
     ListLedgersUseCase,
