@@ -10,11 +10,13 @@ import { ORGANIZATION_ID_HEADER } from '../../core/tenant/tenant.guard.js';
 import { ValidationModule } from '../../core/validation/validation.module.js';
 import { LedgerNotFoundError } from '../../ledgers/domain/ledger-not-found.error.js';
 import { CreateTransactionUseCase } from '../application/use-cases/create-transaction.use-case.js';
+import { GetTransactionUseCase } from '../application/use-cases/get-transaction.use-case.js';
 import { InsufficientFundsError } from '../domain/insufficient-funds.error.js';
 import { InvalidPostingError } from '../domain/invalid-posting.error.js';
 import { InvalidTransactionError } from '../domain/invalid-transaction.error.js';
 import { Posting } from '../domain/posting.js';
 import { TransactionDomainError } from '../domain/transaction-domain.error.js';
+import { TransactionNotFoundError } from '../domain/transaction-not-found.error.js';
 import { TransactionReferenceAlreadyExistsError } from '../domain/transaction-reference-already-exists.error.js';
 import { Transaction } from '../domain/transaction.entity.js';
 import { TransactionsController } from './transactions.controller.js';
@@ -23,6 +25,7 @@ import { TransactionsController } from './transactions.controller.js';
 // error filters. Only the use case is fake, so no database is needed.
 describe('TransactionsController', () => {
   const execute = vi.fn<CreateTransactionUseCase['execute']>();
+  const executeGet = vi.fn<GetTransactionUseCase['execute']>();
   const organizationId = randomUUIDv7();
   let app: INestApplication<App>;
 
@@ -34,7 +37,10 @@ describe('TransactionsController', () => {
         ValidationModule,
       ],
       controllers: [TransactionsController],
-      providers: [{ provide: CreateTransactionUseCase, useValue: { execute } }],
+      providers: [
+        { provide: CreateTransactionUseCase, useValue: { execute } },
+        { provide: GetTransactionUseCase, useValue: { execute: executeGet } },
+      ],
     }).compile();
     app = moduleRef.createNestApplication();
     await app.init();
@@ -46,6 +52,7 @@ describe('TransactionsController', () => {
 
   beforeEach(() => {
     execute.mockReset();
+    executeGet.mockReset();
     // Builds a transaction from the input, like the real use case does.
     execute.mockImplementation(async (input) =>
       Transaction.create({
@@ -89,6 +96,14 @@ describe('TransactionsController', () => {
         postedAt: '2026-11-07T10:00:00.000Z',
         createdAt: '2026-11-07T10:00:01.000Z',
       });
+    });
+
+    it('sends the URL of the new transaction in the Location header', async () => {
+      const res = await post(validBody, 'my-ledger').expect(201);
+
+      expect(res.headers.location).toBe(
+        '/ledgers/my-ledger/transactions/0190a5d4-7b3c-7abc-8def-0123456789ab',
+      );
     });
 
     it('returns a null reference when none was sent', async () => {
@@ -252,6 +267,106 @@ describe('TransactionsController', () => {
       const res = await post(validBody).expect(500);
 
       expect(res.body.errorMessage).toBe('Internal server error');
+    });
+  });
+
+  describe('GET /ledgers/:ledgerName/transactions/:transactionId', () => {
+    const transactionId = '0190a5d4-7b3c-7abc-8def-0123456789ab';
+
+    const stored = () =>
+      Transaction.reconstitute({
+        id: transactionId,
+        organizationId,
+        ledgerId: '0190a5d4-7b3c-7abc-8def-0123456789ac',
+        reference: 'order-1',
+        postings: [
+          Posting.of(
+            AccountAddress.of('world'),
+            AccountAddress.of('users:1'),
+            Money.of(AssetCode.of('USD'), 1050n),
+          ),
+        ],
+        postedAt: new Date('2026-11-07T10:00:00.000Z'),
+        createdAt: new Date('2026-11-07T10:00:01.000Z'),
+      });
+
+    /** `org` is the header value. Pass `null` to send no header at all. */
+    const get = (
+      id: string = transactionId,
+      ledger = 'main',
+      org: string | null = organizationId,
+    ) => {
+      const req = request(app.getHttpServer()).get(`/ledgers/${ledger}/transactions/${id}`);
+      return org === null ? req : req.set(ORGANIZATION_ID_HEADER, org);
+    };
+
+    it('returns 200 with the transaction, in the same shape as create', async () => {
+      executeGet.mockResolvedValue(stored());
+
+      const res = await get().expect(200);
+
+      expect(res.body).toEqual({
+        id: transactionId,
+        reference: 'order-1',
+        postings: [{ source: 'world', destination: 'users:1', asset: 'USD', amount: '1050' }],
+        postedAt: '2026-11-07T10:00:00.000Z',
+        createdAt: '2026-11-07T10:00:01.000Z',
+      });
+    });
+
+    it('gives the use case the organization, the ledger name and the id', async () => {
+      executeGet.mockResolvedValue(stored());
+
+      await get(transactionId, 'my-ledger').expect(200);
+
+      expect(executeGet).toHaveBeenCalledExactlyOnceWith({
+        organizationId,
+        ledgerName: 'my-ledger',
+        transactionId,
+      });
+    });
+
+    it('returns 404 TRANSACTION_NOT_FOUND when the ledger has no such transaction', async () => {
+      executeGet.mockRejectedValue(new TransactionNotFoundError(transactionId));
+
+      const res = await get().expect(404);
+
+      expect(res.body).toEqual({
+        errorCode: 'TRANSACTION_NOT_FOUND',
+        errorMessage: 'Transaction not found in the ledger',
+      });
+    });
+
+    it('returns 404 LEDGER_NOT_FOUND when there is no such ledger', async () => {
+      executeGet.mockRejectedValue(new LedgerNotFoundError('main'));
+
+      const res = await get().expect(404);
+
+      expect(res.body.errorCode).toBe('LEDGER_NOT_FOUND');
+    });
+
+    it.each([
+      ['not a uuid', 'abc'],
+      ['a UUIDv4', '3b241101-e2bb-4255-8caf-4136c566a962'],
+      ['a number', '12345'],
+    ])('returns 400 VALIDATION when the id is %s', async (_label, id) => {
+      const res = await get(id).expect(400);
+
+      expect(res.body.errorCode).toBe('VALIDATION');
+      expect(executeGet).not.toHaveBeenCalled();
+    });
+
+    it('returns 400 VALIDATION for a ledger name with a wrong shape', async () => {
+      const res = await get(transactionId, 'Bad_Name').expect(400);
+
+      expect(res.body.errorCode).toBe('VALIDATION');
+      expect(executeGet).not.toHaveBeenCalled();
+    });
+
+    it('refuses a request without the organization header', async () => {
+      await get(transactionId, 'main', null).expect(400);
+
+      expect(executeGet).not.toHaveBeenCalled();
     });
   });
 });

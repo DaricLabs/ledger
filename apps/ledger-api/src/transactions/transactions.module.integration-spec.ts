@@ -11,7 +11,9 @@ import {
   CreateTransactionUseCase,
   type ICreateTransactionInput,
 } from './application/use-cases/create-transaction.use-case.js';
+import { GetTransactionUseCase } from './application/use-cases/get-transaction.use-case.js';
 import { InsufficientFundsError } from './domain/insufficient-funds.error.js';
+import { TransactionNotFoundError } from './domain/transaction-not-found.error.js';
 import { TransactionReferenceAlreadyExistsError } from './domain/transaction-reference-already-exists.error.js';
 import { TransactionsModule } from './transactions.module.js';
 
@@ -24,6 +26,7 @@ describe('TransactionsModule (real database)', () => {
   let db: LedgerDatabase;
   let createLedger: CreateLedgerUseCase;
   let createTransaction: CreateTransactionUseCase;
+  let getTransaction: GetTransactionUseCase;
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -43,6 +46,7 @@ describe('TransactionsModule (real database)', () => {
     db = app.get<LedgerDatabase>(KYSELY_DB);
     createLedger = app.get(CreateLedgerUseCase);
     createTransaction = app.get(CreateTransactionUseCase);
+    getTransaction = app.get(GetTransactionUseCase);
   });
 
   afterAll(async () => {
@@ -256,6 +260,69 @@ describe('TransactionsModule (real database)', () => {
     await expect(
       move(newOrganizationId(), [posting('world', 'users:1', 1n)]),
     ).rejects.toBeInstanceOf(LedgerNotFoundError);
+  });
+
+  describe('get', () => {
+    const get = (organizationId: string, transactionId: string, ledgerName = 'main') =>
+      getTransaction.execute({ organizationId, ledgerName, transactionId });
+
+    it('gives back the transaction that was created, the same way', async () => {
+      const { organizationId } = await setup();
+      const created = await move(
+        organizationId,
+        [posting('world', 'users:1', 1000n), posting('users:1', 'platform:fees', 25n)],
+        'order-1',
+      );
+
+      const found = await get(organizationId, created.id);
+
+      expect(found).toMatchObject({
+        id: created.id,
+        organizationId,
+        ledgerId: created.ledgerId,
+        reference: 'order-1',
+        postedAt: created.postedAt,
+        createdAt: created.createdAt,
+      });
+      expect(found.postings).toEqual(created.postings);
+    });
+
+    it('throws LedgerNotFoundError for a ledger that does not exist', async () => {
+      const { organizationId } = await setup();
+      const created = await move(organizationId, [posting('world', 'users:1', 1n)]);
+
+      await expect(get(organizationId, created.id, 'missing')).rejects.toBeInstanceOf(
+        LedgerNotFoundError,
+      );
+    });
+
+    it('throws TransactionNotFoundError for an id that does not exist', async () => {
+      const { organizationId } = await setup();
+
+      await expect(get(organizationId, newOrganizationId())).rejects.toBeInstanceOf(
+        TransactionNotFoundError,
+      );
+    });
+
+    it('does not find a transaction of another ledger of the same organization', async () => {
+      const { organizationId } = await setup();
+      await createLedger.execute({ organizationId, name: 'other', metadata: {} });
+      const created = await move(organizationId, [posting('world', 'users:1', 1n)]);
+
+      await expect(get(organizationId, created.id, 'other')).rejects.toBeInstanceOf(
+        TransactionNotFoundError,
+      );
+    });
+
+    it('does not find a transaction of another organization', async () => {
+      const { organizationId } = await setup();
+      const created = await move(organizationId, [posting('world', 'users:1', 1n)]);
+      const other = await setup();
+
+      await expect(get(other.organizationId, created.id)).rejects.toBeInstanceOf(
+        TransactionNotFoundError,
+      );
+    });
   });
 
   describe('at the same time', () => {

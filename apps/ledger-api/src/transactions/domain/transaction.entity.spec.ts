@@ -33,6 +33,47 @@ const held = (account: string, amount: bigint, asset = usd) =>
     allowOverdraft: account === 'world',
   });
 
+describe('Transaction.reconstitute', () => {
+  it('keeps what it was given', () => {
+    const transaction = Transaction.reconstitute(props({ reference: 'order-1' }));
+
+    expect(transaction.id).toBe('0190a5d4-7b3c-7abc-8def-0123456789ab');
+    expect(transaction.organizationId).toBe('0190a5d4-7b3c-7abc-8def-0123456789ac');
+    expect(transaction.ledgerId).toBe('0190a5d4-7b3c-7abc-8def-0123456789ad');
+    expect(transaction.reference).toBe('order-1');
+    expect(transaction.postings).toHaveLength(1);
+    expect(transaction.postedAt).toEqual(new Date('2026-11-07T10:00:00.000Z'));
+    expect(transaction.createdAt).toEqual(new Date('2026-11-07T10:00:01.000Z'));
+  });
+
+  it('trusts storage: it does not check the rules of create again', () => {
+    expect(() => Transaction.reconstitute(props({ postings: [] }))).not.toThrow();
+  });
+
+  it('is not changed by changes to the list or the dates it was given', () => {
+    const postings = [posting('world', 'a', 100n)];
+    const createdAt = new Date('2026-11-07T10:00:01.000Z');
+    const transaction = Transaction.reconstitute(props({ postings, createdAt }));
+
+    postings.push(posting('a', 'b', 1n));
+    createdAt.setFullYear(2000);
+
+    expect(transaction.postings).toHaveLength(1);
+    expect(transaction.createdAt).toEqual(new Date('2026-11-07T10:00:01.000Z'));
+  });
+
+  it('applies postings like a transaction made with create', () => {
+    const transaction = Transaction.reconstitute(props({ postings: [posting('world', 'a', 5n)] }));
+
+    const result = transaction.applyTo([held('a', 0n), held('world', 0n)]);
+
+    expect(result.map((b) => [b.key.address.value, b.balance.amount])).toEqual([
+      ['a', 5n],
+      ['world', -5n],
+    ]);
+  });
+});
+
 describe('Transaction.create', () => {
   it('keeps what it was given', () => {
     const transaction = Transaction.create(props({ reference: 'order-1' }));

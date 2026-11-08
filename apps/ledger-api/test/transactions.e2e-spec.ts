@@ -34,6 +34,11 @@ describe('transactions (e2e)', () => {
       .set(ORGANIZATION_ID_HEADER, organizationId)
       .send(body);
 
+  const getTransaction = (organizationId: string, id: string, ledger = 'main') =>
+    request(app.getHttpServer())
+      .get(`/ledgers/${ledger}/transactions/${id}`)
+      .set(ORGANIZATION_ID_HEADER, organizationId);
+
   const posting = (source: string, destination: string, amount: string) => ({
     source,
     destination,
@@ -140,5 +145,99 @@ describe('transactions (e2e)', () => {
     }).expect(400);
 
     expect(res.body.errorCode).toBe('VALIDATION');
+  });
+
+  it('sends the URL of the new transaction in the Location header', async () => {
+    const organizationId = randomUUIDv7();
+    await createLedger(organizationId);
+
+    const res = await createTransaction(organizationId, {
+      postings: [posting('world', 'users:1', '5')],
+    }).expect(201);
+
+    expect(res.headers.location).toBe(`/ledgers/main/transactions/${res.body.id}`);
+  });
+
+  describe('get', () => {
+    it('gets a transaction, the same as the create response', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId);
+      const created = await createTransaction(organizationId, {
+        reference: 'order-1',
+        postings: [posting('world', 'users:1', '1050'), posting('users:1', 'fees', '50')],
+      }).expect(201);
+
+      const res = await getTransaction(organizationId, created.body.id).expect(200);
+
+      expect(res.body).toEqual(created.body);
+    });
+
+    it('follows the Location header of create', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId);
+      const created = await createTransaction(organizationId, {
+        postings: [posting('world', 'users:1', '5')],
+      }).expect(201);
+
+      const res = await request(app.getHttpServer())
+        .get(created.headers.location as string)
+        .set(ORGANIZATION_ID_HEADER, organizationId)
+        .expect(200);
+
+      expect(res.body.id).toBe(created.body.id);
+    });
+
+    it('returns 404 TRANSACTION_NOT_FOUND for an id that does not exist', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId);
+
+      const res = await getTransaction(organizationId, randomUUIDv7()).expect(404);
+
+      expect(res.body.errorCode).toBe('TRANSACTION_NOT_FOUND');
+    });
+
+    it('returns 404 LEDGER_NOT_FOUND for a ledger that does not exist', async () => {
+      const res = await getTransaction(randomUUIDv7(), randomUUIDv7(), 'missing').expect(404);
+
+      expect(res.body.errorCode).toBe('LEDGER_NOT_FOUND');
+    });
+
+    it('returns 404 for the transaction of another organization', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId);
+      const created = await createTransaction(organizationId, {
+        postings: [posting('world', 'users:1', '5')],
+      }).expect(201);
+      const otherOrganizationId = randomUUIDv7();
+      await createLedger(otherOrganizationId);
+
+      const res = await getTransaction(otherOrganizationId, created.body.id).expect(404);
+
+      expect(res.body.errorCode).toBe('TRANSACTION_NOT_FOUND');
+    });
+
+    it('returns 404 for the transaction of another ledger', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId, 'one');
+      await createLedger(organizationId, 'two');
+      const created = await createTransaction(
+        organizationId,
+        { postings: [posting('world', 'users:1', '5')] },
+        'one',
+      ).expect(201);
+
+      const res = await getTransaction(organizationId, created.body.id, 'two').expect(404);
+
+      expect(res.body.errorCode).toBe('TRANSACTION_NOT_FOUND');
+    });
+
+    it('returns 400 VALIDATION for an id that is not a UUIDv7', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId);
+
+      const res = await getTransaction(organizationId, 'abc').expect(400);
+
+      expect(res.body.errorCode).toBe('VALIDATION');
+    });
   });
 });

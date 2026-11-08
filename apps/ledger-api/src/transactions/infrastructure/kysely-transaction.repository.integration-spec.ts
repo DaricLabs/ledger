@@ -163,3 +163,137 @@ describe('KyselyTransactionRepository.insert', () => {
     expect(error).toMatchObject({ code: SqlState.ForeignKeyViolation });
   });
 });
+
+describe('KyselyTransactionRepository.findById', () => {
+  it('finds a saved transaction, with its postings in order', async () => {
+    const organizationId = ids.next();
+
+    const { saved, found } = await withTenant(db, organizationId, async (trx) => {
+      const ledgerId = await prepareLedger(trx, organizationId);
+      const created = makeTransaction(organizationId, ledgerId, 'ref-1');
+      await repository.insert(trx, created);
+      return { saved: created, found: await repository.findById(trx, ledgerId, created.id) };
+    });
+
+    expect(found).not.toBeNull();
+    expect(found).toMatchObject({
+      id: saved.id,
+      organizationId,
+      ledgerId: saved.ledgerId,
+      reference: 'ref-1',
+      postedAt: new Date('2026-11-07T10:00:00.000Z'),
+      createdAt: new Date('2026-11-07T10:00:01.000Z'),
+    });
+    expect(
+      found?.postings.map((p) => [
+        p.source.value,
+        p.destination.value,
+        p.asset.value,
+        p.money.amount,
+      ]),
+    ).toEqual([
+      ['world', 'a', 'USD', 100n],
+      ['a', 'b', 'USD', 30n],
+    ]);
+  });
+
+  it('gives back a null reference as null', async () => {
+    const organizationId = ids.next();
+
+    const found = await withTenant(db, organizationId, async (trx) => {
+      const ledgerId = await prepareLedger(trx, organizationId);
+      const created = makeTransaction(organizationId, ledgerId, null);
+      await repository.insert(trx, created);
+      return repository.findById(trx, ledgerId, created.id);
+    });
+
+    expect(found?.reference).toBeNull();
+  });
+
+  it('keeps the posting order for many postings', async () => {
+    const organizationId = ids.next();
+
+    const found = await withTenant(db, organizationId, async (trx) => {
+      const ledgerId = await prepareLedger(trx, organizationId);
+      const created = Transaction.create({
+        id: ids.next(),
+        organizationId,
+        ledgerId,
+        reference: null,
+        // The amounts are the order: 1, 2, ... 12.
+        postings: Array.from({ length: 12 }, (_, i) => posting('world', 'a', BigInt(i + 1))),
+        postedAt: new Date('2026-11-07T10:00:00.000Z'),
+        createdAt: new Date('2026-11-07T10:00:01.000Z'),
+      });
+      await repository.insert(trx, created);
+      return repository.findById(trx, ledgerId, created.id);
+    });
+
+    expect(found?.postings.map((p) => p.money.amount)).toEqual(
+      Array.from({ length: 12 }, (_, i) => BigInt(i + 1)),
+    );
+  });
+
+  it('keeps the biggest amount the column can hold', async () => {
+    const organizationId = ids.next();
+    const big = 10n ** 78n - 1n;
+
+    const found = await withTenant(db, organizationId, async (trx) => {
+      const ledgerId = await prepareLedger(trx, organizationId);
+      const created = Transaction.create({
+        id: ids.next(),
+        organizationId,
+        ledgerId,
+        reference: null,
+        postings: [posting('world', 'a', big)],
+        postedAt: new Date('2026-11-07T10:00:00.000Z'),
+        createdAt: new Date('2026-11-07T10:00:01.000Z'),
+      });
+      await repository.insert(trx, created);
+      return repository.findById(trx, ledgerId, created.id);
+    });
+
+    expect(found?.postings[0]?.money.amount).toBe(big);
+  });
+
+  it('gives null for an id that does not exist', async () => {
+    const organizationId = ids.next();
+
+    const found = await withTenant(db, organizationId, async (trx) => {
+      const ledgerId = await prepareLedger(trx, organizationId);
+      return repository.findById(trx, ledgerId, ids.next());
+    });
+
+    expect(found).toBeNull();
+  });
+
+  it('gives null for a transaction of another ledger of the same organization', async () => {
+    const organizationId = ids.next();
+
+    const found = await withTenant(db, organizationId, async (trx) => {
+      const ledgerId = await prepareLedger(trx, organizationId);
+      const created = makeTransaction(organizationId, ledgerId, null);
+      await repository.insert(trx, created);
+      return repository.findById(trx, ids.next(), created.id);
+    });
+
+    expect(found).toBeNull();
+  });
+
+  it('does not find the transaction of another organization', async () => {
+    const organizationId = ids.next();
+    const { ledgerId, transactionId } = await withTenant(db, organizationId, async (trx) => {
+      const id = await prepareLedger(trx, organizationId);
+      const created = makeTransaction(organizationId, id, null);
+      await repository.insert(trx, created);
+      return { ledgerId: id, transactionId: created.id };
+    });
+
+    // Even with the right ledger id and transaction id, row-level security hides the rows.
+    const found = await withTenant(db, ids.next(), (trx) =>
+      repository.findById(trx, ledgerId, transactionId),
+    );
+
+    expect(found).toBeNull();
+  });
+});
