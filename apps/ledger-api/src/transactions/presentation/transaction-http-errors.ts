@@ -4,6 +4,7 @@ import { InsufficientFundsError } from '../domain/insufficient-funds.error.js';
 import { InvalidPostingError } from '../domain/invalid-posting.error.js';
 import { InvalidTransactionError } from '../domain/invalid-transaction.error.js';
 import type { TransactionDomainError } from '../domain/transaction-domain.error.js';
+import { TransactionNotFoundError } from '../domain/transaction-not-found.error.js';
 import { TransactionReferenceAlreadyExistsError } from '../domain/transaction-reference-already-exists.error.js';
 
 /**
@@ -24,6 +25,9 @@ export function toTransactionHttpException(
 }
 
 function statusOf(error: TransactionDomainError | ValueObjectError): HttpStatus {
+  if (error instanceof TransactionNotFoundError) {
+    return HttpStatus.NOT_FOUND;
+  }
   if (error instanceof TransactionReferenceAlreadyExistsError) {
     return HttpStatus.CONFLICT;
   }

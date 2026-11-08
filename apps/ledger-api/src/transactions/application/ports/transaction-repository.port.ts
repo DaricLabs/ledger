@@ -11,6 +11,16 @@ export interface ITransactionRepository {
    * transaction with this reference.
    */
   insert(trx: TenantTransaction, transaction: Transaction): Promise<void>;
+
+  /**
+   * Finds a transaction of a ledger by its id, with its postings in order.
+   *
+   * Only the given ledger is searched, so the id of a transaction of another
+   * ledger gives `null`, like an id that does not exist.
+   *
+   * @returns The transaction, or `null` if the ledger has none with this id.
+   */
+  findById(trx: TenantTransaction, ledgerId: string, id: string): Promise<Transaction | null>;
 }
 
 /** Nest DI token for {@link ITransactionRepository}. */

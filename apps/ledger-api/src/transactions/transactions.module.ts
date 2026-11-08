@@ -5,6 +5,7 @@ import { LedgersModule } from '../ledgers/ledgers.module.js';
 import { ACCOUNT_BALANCE_REPOSITORY } from './application/ports/account-balance-repository.port.js';
 import { TRANSACTION_REPOSITORY } from './application/ports/transaction-repository.port.js';
 import { CreateTransactionUseCase } from './application/use-cases/create-transaction.use-case.js';
+import { GetTransactionUseCase } from './application/use-cases/get-transaction.use-case.js';
 import { KyselyAccountBalanceRepository } from './infrastructure/kysely-account-balance.repository.js';
 import { KyselyTransactionRepository } from './infrastructure/kysely-transaction.repository.js';
 import { TransactionsController } from './presentation/transactions.controller.js';
@@ -23,7 +24,8 @@ import { TransactionsController } from './presentation/transactions.controller.j
     { provide: ACCOUNT_BALANCE_REPOSITORY, useClass: KyselyAccountBalanceRepository },
     { provide: TRANSACTION_REPOSITORY, useClass: KyselyTransactionRepository },
     CreateTransactionUseCase,
+    GetTransactionUseCase,
   ],
-  exports: [CreateTransactionUseCase],
+  exports: [CreateTransactionUseCase, GetTransactionUseCase],
 })
 export class TransactionsModule {}

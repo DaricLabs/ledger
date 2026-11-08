@@ -40,8 +40,8 @@ export interface TransactionProps {
  * transaction by accident. Once saved, a transaction is never changed or
  * removed: a mistake is fixed by a new transaction.
  *
- * Make one with `Transaction.create`. Reading transactions back is not
- * built yet, so there is no `reconstitute` for now.
+ * Make a new one with `Transaction.create`, and one that is read from
+ * storage with `Transaction.reconstitute`.
  */
 export class Transaction {
   private constructor(private readonly props: Readonly<TransactionProps>) {}
@@ -70,6 +70,22 @@ export class Transaction {
         `Reference must be 1 to ${TRANSACTION_REFERENCE_MAX_LENGTH} characters`,
       );
     }
+    return Transaction.from(props);
+  }
+
+  /**
+   * Rebuilds a transaction that was read from storage.
+   *
+   * It trusts the data and does not check the rules of `create` again: only a
+   * transaction that followed them was ever saved, and the database has the
+   * same checks. The postings must be in the order of their `seq`.
+   */
+  static reconstitute(props: TransactionProps): Transaction {
+    return Transaction.from(props);
+  }
+
+  /** Copies the data, so the caller cannot change a transaction through what it passed in. */
+  private static from(props: TransactionProps): Transaction {
     return new Transaction(
       Object.freeze({
         id: props.id,
