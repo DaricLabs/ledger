@@ -7,6 +7,7 @@ import { LoggingModule } from './core/logging/logging.module.js';
 import { HealthModule } from './core/health/health.module.js';
 import { ValidationModule } from './core/validation/validation.module.js';
 import { LedgersModule } from './ledgers/ledgers.module.js';
+import { TransactionsModule } from './transactions/transactions.module.js';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { LedgersModule } from './ledgers/ledgers.module.js';
     DatabaseModule,
     HealthModule,
     LedgersModule,
+    TransactionsModule,
   ],
 })
 export class AppModule {}
