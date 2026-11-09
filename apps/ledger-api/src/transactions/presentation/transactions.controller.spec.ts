@@ -12,7 +12,7 @@ import { LedgerNotFoundError } from '../../ledgers/domain/ledger-not-found.error
 import { CreateTransactionUseCase } from '../application/use-cases/create-transaction.use-case.js';
 import { GetTransactionUseCase } from '../application/use-cases/get-transaction.use-case.js';
 import { ListTransactionsUseCase } from '../application/use-cases/list-transactions.use-case.js';
-import { InsufficientFundsError } from '../domain/insufficient-funds.error.js';
+import { InsufficientFundsError } from '../../accounts/domain/insufficient-funds.error.js';
 import { InvalidPostingError } from '../domain/invalid-posting.error.js';
 import { InvalidTransactionError } from '../domain/invalid-transaction.error.js';
 import { Posting } from '../domain/posting.js';

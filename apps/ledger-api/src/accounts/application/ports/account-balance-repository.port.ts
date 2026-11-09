@@ -2,12 +2,11 @@ import type { TenantTransaction } from '@ledger/database';
 import type { AccountBalance, IBalanceKey } from '../../domain/account-balance.js';
 
 /**
- * Storage of the accounts and balances that transactions use. Every method
- * works inside a transaction the caller owns.
+ * The write side of accounts and balances, for the features that move money.
+ * Every method works inside a transaction the caller owns.
  *
- * This is not the accounts feature. Accounts are made when money first
- * moves through them, and this port only does that and keeps the balances.
- * Reading and editing accounts will be a feature of its own.
+ * Accounts are made when money first moves through them, and this port does
+ * that and keeps the balances. Reading accounts is `IAccountRepository`.
  */
 export interface IAccountBalanceRepository {
   /**

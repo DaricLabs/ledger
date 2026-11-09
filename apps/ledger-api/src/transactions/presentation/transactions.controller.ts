@@ -10,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { Response } from 'express';
+import { AccountExceptionFilter } from '../../accounts/presentation/account-exception.filter.js';
 import { OrganizationId } from '../../core/tenant/organization-id.decorator.js';
 import { TenantGuard } from '../../core/tenant/tenant.guard.js';
 import { LedgerExceptionFilter } from '../../ledgers/presentation/ledger-exception.filter.js';
@@ -43,15 +44,16 @@ const TRANSACTIONS_PATH = 'transactions';
  * errors become HTTP errors in `TransactionExceptionFilter`.
  *
  * A transaction belongs to a ledger, so its URL is under the ledger. The
- * ledger errors (`LEDGER_NOT_FOUND`) are turned into HTTP errors by the
- * ledgers feature's own filter.
+ * ledger errors (`LEDGER_NOT_FOUND`) and the account errors
+ * (`INSUFFICIENT_FUNDS`) are turned into HTTP errors by the filters of their
+ * own features.
  *
  * `TenantGuard` runs first, so a bad `X-Organization-Id` header is refused
  * before the body or the URL is looked at.
  */
 @Controller(`${LEDGERS_PATH}/:ledgerName/${TRANSACTIONS_PATH}`)
 @UseGuards(TenantGuard)
-@UseFilters(LedgerExceptionFilter, TransactionExceptionFilter)
+@UseFilters(LedgerExceptionFilter, AccountExceptionFilter, TransactionExceptionFilter)
 export class TransactionsController {
   constructor(
     private readonly createTransaction: CreateTransactionUseCase,

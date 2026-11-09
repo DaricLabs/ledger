@@ -3,7 +3,7 @@ import {
   compareBalanceKeys,
   type AccountBalance,
   type IBalanceKey,
-} from './account-balance.js';
+} from '../../accounts/domain/account-balance.js';
 import { InvalidTransactionError } from './invalid-transaction.error.js';
 import type { Posting } from './posting.js';
 import {

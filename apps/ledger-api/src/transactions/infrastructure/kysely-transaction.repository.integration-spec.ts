@@ -8,7 +8,7 @@ import {
 } from '@ledger/database/storage';
 import type { TenantTransaction } from '@ledger/database';
 import { Uuidv7IdGenerator } from '../../ids/infrastructure/uuidv7-id-generator.js';
-import { AccountBalance } from '../domain/account-balance.js';
+import { AccountBalance } from '../../accounts/domain/account-balance.js';
 import { Posting } from '../domain/posting.js';
 import { TransactionReferenceAlreadyExistsError } from '../domain/transaction-reference-already-exists.error.js';
 import { Transaction } from '../domain/transaction.entity.js';
@@ -16,7 +16,7 @@ import type {
   ITransactionPage,
   ITransactionPageQuery,
 } from '../application/ports/transaction-repository.port.js';
-import { KyselyAccountBalanceRepository } from './kysely-account-balance.repository.js';
+import { KyselyAccountBalanceRepository } from '../../accounts/infrastructure/kysely-account-balance.repository.js';
 import { KyselyTransactionRepository } from './kysely-transaction.repository.js';
 
 // The repositories have no constructor arguments, so these tests do not need Nest.

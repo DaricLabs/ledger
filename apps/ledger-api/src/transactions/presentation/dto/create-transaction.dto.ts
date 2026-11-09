@@ -1,24 +1,10 @@
 import { z } from 'zod';
-import {
-  ACCOUNT_ADDRESS_MAX_LENGTH,
-  ACCOUNT_ADDRESS_PATTERN,
-  ASSET_CODE_PATTERN,
-} from '@ledger/domain';
+import { ASSET_CODE_PATTERN } from '@ledger/domain';
+import { accountAddressSchema } from '../../../accounts/presentation/dto/account-address.dto.js';
 import {
   TRANSACTION_MAX_POSTINGS,
   TRANSACTION_REFERENCE_MAX_LENGTH,
 } from '../../domain/transaction-limits.js';
-
-/** An account address in a request. It checks the shape only. */
-const accountAddressSchema = z
-  .string()
-  .max(ACCOUNT_ADDRESS_MAX_LENGTH, {
-    error: `Must have up to ${ACCOUNT_ADDRESS_MAX_LENGTH} characters`,
-  })
-  .regex(ACCOUNT_ADDRESS_PATTERN, {
-    error:
-      'Must be parts separated by ":". Each part starts with a lowercase letter or digit, and has only lowercase letters, digits, "_" and "-"',
-  });
 
 /** An asset code in a request. It checks the shape only. */
 const assetCodeSchema = z.string().regex(ASSET_CODE_PATTERN, {

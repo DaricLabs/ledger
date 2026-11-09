@@ -1,6 +1,5 @@
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { ValueObjectError } from '@ledger/domain';
-import { InsufficientFundsError } from '../domain/insufficient-funds.error.js';
 import { InvalidPostingError } from '../domain/invalid-posting.error.js';
 import { InvalidTransactionError } from '../domain/invalid-transaction.error.js';
 import type { TransactionDomainError } from '../domain/transaction-domain.error.js';
@@ -30,11 +29,6 @@ function statusOf(error: TransactionDomainError | ValueObjectError): HttpStatus 
   }
   if (error instanceof TransactionReferenceAlreadyExistsError) {
     return HttpStatus.CONFLICT;
-  }
-  // The request is well formed, but the money is not there. It can work later,
-  // when the account has more, so it is not a 400.
-  if (error instanceof InsufficientFundsError) {
-    return HttpStatus.UNPROCESSABLE_ENTITY;
   }
   if (
     error instanceof InvalidPostingError ||

@@ -6,8 +6,13 @@ const CURSOR_PATTERN = /^[A-Za-z0-9_-]+$/;
 /**
  * The longest cursor we read. A cursor is a small JSON object, so this is
  * generous, and it keeps a client from sending a huge text to be decoded.
+ *
+ * It must be at least as long as the longest cursor we make. Today that is the
+ * cursor of a page of accounts whose last address has the longest allowed
+ * length (256 characters), which is 355 characters. If a cursor we made were
+ * longer than this limit, the client could not read the page after it.
  */
-export const MAX_CURSOR_LENGTH = 200;
+export const MAX_CURSOR_LENGTH = 400;
 
 /**
  * Makes a cursor: an opaque text that a client gets in the `next` field of a

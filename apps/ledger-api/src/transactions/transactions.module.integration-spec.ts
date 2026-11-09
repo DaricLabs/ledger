@@ -13,7 +13,7 @@ import {
 } from './application/use-cases/create-transaction.use-case.js';
 import { GetTransactionUseCase } from './application/use-cases/get-transaction.use-case.js';
 import { ListTransactionsUseCase } from './application/use-cases/list-transactions.use-case.js';
-import { InsufficientFundsError } from './domain/insufficient-funds.error.js';
+import { InsufficientFundsError } from '../accounts/domain/insufficient-funds.error.js';
 import { TransactionNotFoundError } from './domain/transaction-not-found.error.js';
 import { TransactionReferenceAlreadyExistsError } from './domain/transaction-reference-already-exists.error.js';
 import { TransactionsModule } from './transactions.module.js';
