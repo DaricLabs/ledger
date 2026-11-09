@@ -1,6 +1,6 @@
 import { AccountAddress, AssetCode, Money, MoneyAmountOutOfRangeError } from '@ledger/domain';
-import { AccountBalance, balanceKeyText } from './account-balance.js';
-import { InsufficientFundsError } from './insufficient-funds.error.js';
+import { AccountBalance, balanceKeyText } from '../../accounts/domain/account-balance.js';
+import { InsufficientFundsError } from '../../accounts/domain/insufficient-funds.error.js';
 import { InvalidTransactionError } from './invalid-transaction.error.js';
 import { Posting } from './posting.js';
 import {

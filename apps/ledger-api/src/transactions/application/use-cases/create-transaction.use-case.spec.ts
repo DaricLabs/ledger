@@ -7,12 +7,12 @@ import type { ITenantTransactionRunner } from '../../../journal/application/port
 import type { ILedgerRepository } from '../../../ledgers/application/ports/ledger-repository.port.js';
 import { LedgerNotFoundError } from '../../../ledgers/domain/ledger-not-found.error.js';
 import { Ledger } from '../../../ledgers/domain/ledger.entity.js';
-import { AccountBalance, balanceKeyText } from '../../domain/account-balance.js';
-import { InsufficientFundsError } from '../../domain/insufficient-funds.error.js';
+import { AccountBalance, balanceKeyText } from '../../../accounts/domain/account-balance.js';
+import { InsufficientFundsError } from '../../../accounts/domain/insufficient-funds.error.js';
 import { InvalidPostingError } from '../../domain/invalid-posting.error.js';
 import { InvalidTransactionError } from '../../domain/invalid-transaction.error.js';
 import { TransactionReferenceAlreadyExistsError } from '../../domain/transaction-reference-already-exists.error.js';
-import type { IAccountBalanceRepository } from '../ports/account-balance-repository.port.js';
+import type { IAccountBalanceRepository } from '../../../accounts/application/ports/account-balance-repository.port.js';
 import type { ITransactionRepository } from '../ports/transaction-repository.port.js';
 import { CreateTransactionUseCase } from './create-transaction.use-case.js';
 

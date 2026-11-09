@@ -1,14 +1,14 @@
-import { TransactionDomainError } from './transaction-domain.error.js';
+import { AccountDomainError } from './account-domain.error.js';
 
 /**
- * A posting takes more money out of an account than the account has, and the
- * account is not allowed to go below zero.
+ * An account is asked to give more money than it has, and it is not allowed to
+ * go below zero. A posting of a transaction does this.
  *
  * Amounts are decimal strings, because a `bigint` cannot go into JSON. The
  * account and the asset have already passed their patterns, and the amounts
  * are numbers, so the message is safe to show to API clients.
  */
-export class InsufficientFundsError extends TransactionDomainError {
+export class InsufficientFundsError extends AccountDomainError {
   readonly code = 'INSUFFICIENT_FUNDS';
 
   /**
