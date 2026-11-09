@@ -1,5 +1,7 @@
+import type { ITransactionPage } from '../../application/ports/transaction-repository.port.js';
 import type { Posting } from '../../domain/posting.js';
 import type { Transaction } from '../../domain/transaction.entity.js';
+import { encodeTransactionCursor } from './transaction-page-cursor.dto.js';
 
 /** A posting as clients see it. Field names are part of the public API. */
 export interface PostingResponseDto {
@@ -42,5 +44,29 @@ export function toTransactionResponseDto(transaction: Transaction): TransactionR
     postings: transaction.postings.map(toPostingResponseDto),
     postedAt: transaction.postedAt.toISOString(),
     createdAt: transaction.createdAt.toISOString(),
+  };
+}
+
+/** One page of `GET /ledgers/:ledgerName/transactions`. Field names are part of the public API. */
+export interface TransactionPageResponseDto {
+  /** The transactions of this page, newest first. */
+  data: TransactionResponseDto[];
+  /** `true` when there is a next page. */
+  hasMore: boolean;
+  /** The `cursor` that gets the next page. It is there only when `hasMore` is `true`. */
+  next?: string;
+}
+
+export function toTransactionPageResponseDto(page: ITransactionPage): TransactionPageResponseDto {
+  const last = page.transactions.at(-1);
+  return {
+    data: page.transactions.map(toTransactionResponseDto),
+    hasMore: page.hasMore,
+    // `last` is always there when `hasMore` is true, because a page holds at
+    // least one transaction. The check is only for the type.
+    next:
+      page.hasMore && last !== undefined
+        ? encodeTransactionCursor({ postedAt: last.postedAt, id: last.id })
+        : undefined,
   };
 }

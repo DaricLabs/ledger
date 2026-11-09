@@ -69,6 +69,7 @@ function setup() {
       calls.push('find transaction');
       return storedTransaction;
     }),
+    findPage: vi.fn<ITransactionRepository['findPage']>(),
   };
 
   const useCase = new GetTransactionUseCase(

@@ -39,6 +39,11 @@ describe('transactions (e2e)', () => {
       .get(`/ledgers/${ledger}/transactions/${id}`)
       .set(ORGANIZATION_ID_HEADER, organizationId);
 
+  const listTransactions = (organizationId: string, query = '', ledger = 'main') =>
+    request(app.getHttpServer())
+      .get(`/ledgers/${ledger}/transactions${query}`)
+      .set(ORGANIZATION_ID_HEADER, organizationId);
+
   const posting = (source: string, destination: string, amount: string) => ({
     source,
     destination,
@@ -236,6 +241,126 @@ describe('transactions (e2e)', () => {
       await createLedger(organizationId);
 
       const res = await getTransaction(organizationId, 'abc').expect(400);
+
+      expect(res.body.errorCode).toBe('VALIDATION');
+    });
+  });
+
+  describe('list', () => {
+    /** Creates one transaction per amount, one after the other. Returns the created bodies. */
+    const createAll = async (organizationId: string, amounts: string[], ledger = 'main') => {
+      const created: { id: string }[] = [];
+      for (const amount of amounts) {
+        const res = await createTransaction(
+          organizationId,
+          { postings: [posting('world', 'users:1', amount)] },
+          ledger,
+        ).expect(201);
+        created.push(res.body);
+      }
+      return created;
+    };
+
+    const idsOf = (body: { data: { id: string }[] }) => body.data.map((t) => t.id);
+
+    it('returns an empty page for a ledger with no transactions', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId);
+
+      const res = await listTransactions(organizationId).expect(200);
+
+      expect(res.body).toEqual({ data: [], hasMore: false });
+    });
+
+    it('lists the transactions newest first, with the same fields as get', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId);
+      const [older, newer] = await createAll(organizationId, ['1', '2']);
+
+      const res = await listTransactions(organizationId).expect(200);
+      const got = await getTransaction(organizationId, older!.id).expect(200);
+
+      expect(idsOf(res.body)).toEqual([newer!.id, older!.id]);
+      expect(res.body.data[1]).toEqual(got.body);
+      expect(res.body.hasMore).toBe(false);
+      expect(res.body).not.toHaveProperty('next');
+    });
+
+    it('reads every transaction once when the "next" cursors are followed', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId);
+      const created = await createAll(organizationId, ['1', '2', '3', '4', '5']);
+
+      const pages: string[][] = [];
+      let query = '?pageSize=2';
+      for (;;) {
+        const res = await listTransactions(organizationId, query).expect(200);
+        pages.push(idsOf(res.body));
+        if (!res.body.hasMore) break;
+        query = `?pageSize=2&cursor=${res.body.next}`;
+      }
+
+      const newestFirst = created.map((t) => t.id).toReversed();
+      expect(pages).toEqual([
+        newestFirst.slice(0, 2),
+        newestFirst.slice(2, 4),
+        newestFirst.slice(4),
+      ]);
+    });
+
+    it('does not move the next page when a new transaction is created in between', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId);
+      const created = await createAll(organizationId, ['1', '2', '3']);
+
+      const first = await listTransactions(organizationId, '?pageSize=2').expect(200);
+      await createAll(organizationId, ['4']);
+      const second = await listTransactions(
+        organizationId,
+        `?pageSize=2&cursor=${first.body.next}`,
+      ).expect(200);
+
+      expect(idsOf(second.body)).toEqual([created[0]!.id]);
+    });
+
+    it('lists only the transactions of the ledger in the URL', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId, 'one');
+      await createLedger(organizationId, 'two');
+      const [inOne] = await createAll(organizationId, ['1'], 'one');
+      await createAll(organizationId, ['2'], 'two');
+
+      const res = await listTransactions(organizationId, '', 'one').expect(200);
+
+      expect(idsOf(res.body)).toEqual([inOne!.id]);
+    });
+
+    it('does not list the transactions of another organization', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId);
+      await createAll(organizationId, ['1']);
+      const otherOrganizationId = randomUUIDv7();
+      await createLedger(otherOrganizationId);
+
+      const res = await listTransactions(otherOrganizationId).expect(200);
+
+      expect(res.body).toEqual({ data: [], hasMore: false });
+    });
+
+    it('returns 404 LEDGER_NOT_FOUND for a ledger that does not exist', async () => {
+      const res = await listTransactions(randomUUIDv7(), '', 'missing').expect(404);
+
+      expect(res.body.errorCode).toBe('LEDGER_NOT_FOUND');
+    });
+
+    it('returns 400 VALIDATION for a pageSize that is out of range', async () => {
+      const res = await listTransactions(randomUUIDv7(), '?pageSize=101').expect(400);
+
+      expect(res.body.errorCode).toBe('VALIDATION');
+    });
+
+    it('returns 400 VALIDATION for a cursor that we did not give', async () => {
+      const res = await listTransactions(randomUUIDv7(), '?cursor=hello').expect(400);
 
       expect(res.body.errorCode).toBe('VALIDATION');
     });

@@ -81,6 +81,7 @@ function setup(held: Held = {}) {
       calls.push('insert');
     }),
     findById: vi.fn<ITransactionRepository['findById']>(),
+    findPage: vi.fn<ITransactionRepository['findPage']>(),
   };
   const logs = {
     append: vi.fn<ILedgerLogWriter['append']>(async () => {
