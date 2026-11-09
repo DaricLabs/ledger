@@ -1,4 +1,14 @@
-import { Body, Controller, Get, Param, Post, Res, UseFilters, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  Res,
+  UseFilters,
+  UseGuards,
+} from '@nestjs/common';
 import type { Response } from 'express';
 import { OrganizationId } from '../../core/tenant/organization-id.decorator.js';
 import { TenantGuard } from '../../core/tenant/tenant.guard.js';
@@ -6,13 +16,20 @@ import { LedgerExceptionFilter } from '../../ledgers/presentation/ledger-excepti
 import { ledgerNameSchema } from '../../ledgers/presentation/dto/ledger-name.dto.js';
 import { CreateTransactionUseCase } from '../application/use-cases/create-transaction.use-case.js';
 import { GetTransactionUseCase } from '../application/use-cases/get-transaction.use-case.js';
+import { ListTransactionsUseCase } from '../application/use-cases/list-transactions.use-case.js';
 import {
   createTransactionSchema,
   type CreateTransactionDto,
 } from './dto/create-transaction.dto.js';
+import {
+  listTransactionsQuerySchema,
+  type ListTransactionsQueryDto,
+} from './dto/list-transactions-query.dto.js';
 import { transactionIdSchema } from './dto/transaction-id.dto.js';
 import {
+  toTransactionPageResponseDto,
   toTransactionResponseDto,
+  type TransactionPageResponseDto,
   type TransactionResponseDto,
 } from './dto/transaction-response.dto.js';
 import { TransactionExceptionFilter } from './transaction-exception.filter.js';
@@ -39,6 +56,7 @@ export class TransactionsController {
   constructor(
     private readonly createTransaction: CreateTransactionUseCase,
     private readonly getTransaction: GetTransactionUseCase,
+    private readonly listTransactions: ListTransactionsUseCase,
   ) {}
 
   /**
@@ -81,6 +99,37 @@ export class TransactionsController {
     // so both are safe in a URL.
     response.location(`/${LEDGERS_PATH}/${ledgerName}/${TRANSACTIONS_PATH}/${transaction.id}`);
     return toTransactionResponseDto(transaction);
+  }
+
+  /**
+   * Lists the transactions of a ledger of the organization of the
+   * `X-Organization-Id` header, one page at a time, newest first (by
+   * `postedAt`, and by `id` when two have the same `postedAt`). Each one has
+   * the same shape as the response of the create call.
+   *
+   * To read all pages, call again with `cursor` set to the `next` of the last
+   * response, until `hasMore` is `false`. New transactions are always newer,
+   * so they never move the pages that follow a cursor.
+   *
+   * - `200`: one page. It is empty when the ledger has no transactions.
+   * - `400`: `VALIDATION` (the ledger name has a wrong shape, `pageSize` is
+   *   not a whole number from 1 to 100, the `cursor` is not one we gave, or a
+   *   query parameter is unknown).
+   * - `404`: `LEDGER_NOT_FOUND` (no such ledger in this organization).
+   */
+  @Get()
+  async list(
+    @OrganizationId() organizationId: string,
+    @Param('ledgerName', { schema: ledgerNameSchema }) ledgerName: string,
+    @Query({ schema: listTransactionsQuerySchema }) query: ListTransactionsQueryDto,
+  ): Promise<TransactionPageResponseDto> {
+    const page = await this.listTransactions.execute({
+      organizationId,
+      ledgerName,
+      pageSize: query.pageSize,
+      after: query.cursor,
+    });
+    return toTransactionPageResponseDto(page);
   }
 
   /**

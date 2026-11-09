@@ -11,6 +11,7 @@ import { ValidationModule } from '../../core/validation/validation.module.js';
 import { LedgerNotFoundError } from '../../ledgers/domain/ledger-not-found.error.js';
 import { CreateTransactionUseCase } from '../application/use-cases/create-transaction.use-case.js';
 import { GetTransactionUseCase } from '../application/use-cases/get-transaction.use-case.js';
+import { ListTransactionsUseCase } from '../application/use-cases/list-transactions.use-case.js';
 import { InsufficientFundsError } from '../domain/insufficient-funds.error.js';
 import { InvalidPostingError } from '../domain/invalid-posting.error.js';
 import { InvalidTransactionError } from '../domain/invalid-transaction.error.js';
@@ -19,6 +20,7 @@ import { TransactionDomainError } from '../domain/transaction-domain.error.js';
 import { TransactionNotFoundError } from '../domain/transaction-not-found.error.js';
 import { TransactionReferenceAlreadyExistsError } from '../domain/transaction-reference-already-exists.error.js';
 import { Transaction } from '../domain/transaction.entity.js';
+import { encodeTransactionCursor } from './dto/transaction-page-cursor.dto.js';
 import { TransactionsController } from './transactions.controller.js';
 
 // These tests start a real Nest app with the real guard, validation pipe and
@@ -26,6 +28,7 @@ import { TransactionsController } from './transactions.controller.js';
 describe('TransactionsController', () => {
   const execute = vi.fn<CreateTransactionUseCase['execute']>();
   const executeGet = vi.fn<GetTransactionUseCase['execute']>();
+  const executeList = vi.fn<ListTransactionsUseCase['execute']>();
   const organizationId = randomUUIDv7();
   let app: INestApplication<App>;
 
@@ -40,6 +43,7 @@ describe('TransactionsController', () => {
       providers: [
         { provide: CreateTransactionUseCase, useValue: { execute } },
         { provide: GetTransactionUseCase, useValue: { execute: executeGet } },
+        { provide: ListTransactionsUseCase, useValue: { execute: executeList } },
       ],
     }).compile();
     app = moduleRef.createNestApplication();
@@ -53,6 +57,7 @@ describe('TransactionsController', () => {
   beforeEach(() => {
     execute.mockReset();
     executeGet.mockReset();
+    executeList.mockReset();
     // Builds a transaction from the input, like the real use case does.
     execute.mockImplementation(async (input) =>
       Transaction.create({
@@ -367,6 +372,195 @@ describe('TransactionsController', () => {
       await get(transactionId, 'main', null).expect(400);
 
       expect(executeGet).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('GET /ledgers/:ledgerName/transactions', () => {
+    const makeTransaction = (id: string, postedAt: string) =>
+      Transaction.reconstitute({
+        id,
+        organizationId,
+        ledgerId: '0190a5d4-7b3c-7abc-8def-0123456789ac',
+        reference: null,
+        postings: [
+          Posting.of(
+            AccountAddress.of('world'),
+            AccountAddress.of('users:1'),
+            Money.of(AssetCode.of('USD'), 1050n),
+          ),
+        ],
+        postedAt: new Date(postedAt),
+        createdAt: new Date(postedAt),
+      });
+
+    const first = makeTransaction(
+      '0190a5d4-7b3c-7abc-8def-0123456789b2',
+      '2026-11-07T11:00:00.000Z',
+    );
+    const second = makeTransaction(
+      '0190a5d4-7b3c-7abc-8def-0123456789b1',
+      '2026-11-07T10:00:00.000Z',
+    );
+
+    beforeEach(() => {
+      executeList.mockResolvedValue({ transactions: [first], hasMore: false });
+    });
+
+    /** `org` is the header value. Pass `null` to send no header at all. */
+    const list = (query = '', ledger = 'main', org: string | null = organizationId) => {
+      const req = request(app.getHttpServer()).get(`/ledgers/${ledger}/transactions${query}`);
+      return org === null ? req : req.set(ORGANIZATION_ID_HEADER, org);
+    };
+
+    describe('success', () => {
+      it('returns 200 with the transactions in "data", in the same shape as get', async () => {
+        const res = await list().expect(200);
+
+        expect(res.body).toEqual({
+          data: [
+            {
+              id: first.id,
+              reference: null,
+              postings: [{ source: 'world', destination: 'users:1', asset: 'USD', amount: '1050' }],
+              postedAt: '2026-11-07T11:00:00.000Z',
+              createdAt: '2026-11-07T11:00:00.000Z',
+            },
+          ],
+          hasMore: false,
+        });
+      });
+
+      it('keeps the order the use case gives', async () => {
+        executeList.mockResolvedValue({ transactions: [first, second], hasMore: false });
+
+        const res = await list().expect(200);
+
+        expect(res.body.data.map((t: { id: string }) => t.id)).toEqual([first.id, second.id]);
+      });
+
+      it('returns an empty page when the ledger has no transactions', async () => {
+        executeList.mockResolvedValue({ transactions: [], hasMore: false });
+
+        const res = await list().expect(200);
+
+        expect(res.body).toEqual({ data: [], hasMore: false });
+      });
+
+      it('gives the use case the organization, the ledger name, the default page size and no position', async () => {
+        await list('', 'my-ledger').expect(200);
+
+        expect(executeList).toHaveBeenCalledExactlyOnceWith({
+          organizationId,
+          ledgerName: 'my-ledger',
+          pageSize: 15,
+          after: undefined,
+        });
+      });
+
+      it('gives the use case the page size of the query', async () => {
+        await list('?pageSize=3').expect(200);
+
+        expect(executeList).toHaveBeenCalledWith(expect.objectContaining({ pageSize: 3 }));
+      });
+
+      it('gives the use case the position that the cursor holds', async () => {
+        const position = { postedAt: second.postedAt, id: second.id };
+
+        await list(`?cursor=${encodeTransactionCursor(position)}`).expect(200);
+
+        expect(executeList).toHaveBeenCalledWith(expect.objectContaining({ after: position }));
+      });
+    });
+
+    describe('next page', () => {
+      it('sends "next" and hasMore when there are more transactions', async () => {
+        executeList.mockResolvedValue({ transactions: [first, second], hasMore: true });
+
+        const res = await list('?pageSize=2').expect(200);
+
+        expect(res.body.hasMore).toBe(true);
+        // The cursor of the last transaction of the page.
+        expect(res.body.next).toBe(
+          encodeTransactionCursor({ postedAt: second.postedAt, id: second.id }),
+        );
+      });
+
+      it('sends no "next" on the last page', async () => {
+        const res = await list().expect(200);
+
+        expect(res.body.hasMore).toBe(false);
+        expect(res.body).not.toHaveProperty('next');
+      });
+
+      it('makes a "next" that the same route accepts', async () => {
+        executeList.mockResolvedValueOnce({ transactions: [first], hasMore: true });
+
+        const page = await list('?pageSize=1').expect(200);
+        await list(`?pageSize=1&cursor=${page.body.next}`).expect(200);
+
+        expect(executeList).toHaveBeenLastCalledWith(
+          expect.objectContaining({ after: { postedAt: first.postedAt, id: first.id } }),
+        );
+      });
+    });
+
+    describe('errors', () => {
+      it('returns 404 LEDGER_NOT_FOUND when there is no such ledger', async () => {
+        executeList.mockRejectedValue(new LedgerNotFoundError('main'));
+
+        const res = await list().expect(404);
+
+        expect(res.body.errorCode).toBe('LEDGER_NOT_FOUND');
+      });
+
+      it('returns 400 VALIDATION for a ledger name with a wrong shape', async () => {
+        const res = await list('', 'Bad_Name').expect(400);
+
+        expect(res.body.errorCode).toBe('VALIDATION');
+        expect(executeList).not.toHaveBeenCalled();
+      });
+
+      it('refuses a request without the organization header', async () => {
+        await list('', 'main', null).expect(400);
+
+        expect(executeList).not.toHaveBeenCalled();
+      });
+
+      it('checks the header before the query', async () => {
+        const res = await list('?pageSize=0', 'main', 'not-an-id').expect(400);
+
+        expect(res.body.errorCode).toBe('INVALID_REQUEST');
+      });
+    });
+
+    describe('query validation', () => {
+      const cursorOf = (text: string) => Buffer.from(text).toString('base64url');
+      const invalidQueries: [string, string, string][] = [
+        ['pageSize is 0', '?pageSize=0', 'pageSize'],
+        ['pageSize is above 100', '?pageSize=101', 'pageSize'],
+        ['pageSize is negative', '?pageSize=-1', 'pageSize'],
+        ['pageSize is not a number', '?pageSize=abc', 'pageSize'],
+        ['pageSize is empty', '?pageSize=', 'pageSize'],
+        ['pageSize is sent twice', '?pageSize=1&pageSize=2', 'pageSize'],
+        ['the cursor is not a cursor', '?cursor=hello', 'cursor'],
+        ['the cursor is empty', '?cursor=', 'cursor'],
+        ['the cursor is sent twice', '?cursor=a&cursor=b', 'cursor'],
+        ['the cursor is a ledger cursor', `?cursor=${cursorOf('{"key":"main"}')}`, 'cursor'],
+        [
+          'the cursor holds a bad id',
+          `?cursor=${cursorOf('{"postedAt":"2026-11-07T10:00:00.000Z","id":"abc"}')}`,
+          'cursor',
+        ],
+        ['a query parameter is unknown', '?pagesize=5', ''],
+      ];
+
+      it.each(invalidQueries)('returns 400 VALIDATION when %s', async (_title, query, path) => {
+        const res = await list(query).expect(400);
+
+        expect(res.body.errorCode).toBe('VALIDATION');
+        expect(res.body.details.map((d: { path: string }) => d.path)).toContain(path);
+        expect(executeList).not.toHaveBeenCalled();
+      });
     });
   });
 });

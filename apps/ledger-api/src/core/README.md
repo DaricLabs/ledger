@@ -12,6 +12,7 @@ accounts or transactions. Business features live next to this folder in `src/`.
 | `errors/`     | The one error body, the global error filter, error logging |
 | `health/`     | Liveness endpoint                                          |
 | `logging/`    | Pino setup, request ids, log levels                        |
+| `pagination/` | Page size and cursor helpers for list endpoints            |
 | `tenant/`     | `TenantGuard` and `@OrganizationId()`                      |
 | `validation/` | Global schema pipe, so `@Body({ schema })` works           |
 

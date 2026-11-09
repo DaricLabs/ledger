@@ -12,6 +12,7 @@ import {
   type ICreateTransactionInput,
 } from './application/use-cases/create-transaction.use-case.js';
 import { GetTransactionUseCase } from './application/use-cases/get-transaction.use-case.js';
+import { ListTransactionsUseCase } from './application/use-cases/list-transactions.use-case.js';
 import { InsufficientFundsError } from './domain/insufficient-funds.error.js';
 import { TransactionNotFoundError } from './domain/transaction-not-found.error.js';
 import { TransactionReferenceAlreadyExistsError } from './domain/transaction-reference-already-exists.error.js';
@@ -27,6 +28,7 @@ describe('TransactionsModule (real database)', () => {
   let createLedger: CreateLedgerUseCase;
   let createTransaction: CreateTransactionUseCase;
   let getTransaction: GetTransactionUseCase;
+  let listTransactions: ListTransactionsUseCase;
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -47,6 +49,7 @@ describe('TransactionsModule (real database)', () => {
     createLedger = app.get(CreateLedgerUseCase);
     createTransaction = app.get(CreateTransactionUseCase);
     getTransaction = app.get(GetTransactionUseCase);
+    listTransactions = app.get(ListTransactionsUseCase);
   });
 
   afterAll(async () => {
@@ -322,6 +325,85 @@ describe('TransactionsModule (real database)', () => {
       await expect(get(other.organizationId, created.id)).rejects.toBeInstanceOf(
         TransactionNotFoundError,
       );
+    });
+  });
+
+  describe('list', () => {
+    const list = (
+      organizationId: string,
+      options: Partial<Parameters<ListTransactionsUseCase['execute']>[0]> = {},
+    ) => listTransactions.execute({ organizationId, ledgerName: 'main', pageSize: 10, ...options });
+
+    it('lists the transactions that were created, newest first, with their postings', async () => {
+      const { organizationId } = await setup();
+      const one = await move(organizationId, [posting('world', 'users:1', 100n)], 'order-1');
+      const two = await move(organizationId, [
+        posting('world', 'users:2', 5n),
+        posting('users:2', 'platform:fees', 1n),
+      ]);
+
+      const page = await list(organizationId);
+
+      expect(page.hasMore).toBe(false);
+      expect(page.transactions.map((t) => t.id)).toEqual([two.id, one.id]);
+      expect(page.transactions[0]).toMatchObject({ reference: null, createdAt: two.createdAt });
+      expect(page.transactions[0]?.postings).toEqual(two.postings);
+      expect(page.transactions[1]?.postings).toEqual(one.postings);
+    });
+
+    it('reads every transaction once when the pages are followed', async () => {
+      const { organizationId } = await setup();
+      const created: string[] = [];
+      for (let i = 1; i <= 5; i += 1) {
+        created.push((await move(organizationId, [posting('world', 'users:1', BigInt(i))])).id);
+      }
+
+      const read: string[] = [];
+      let after: Parameters<ListTransactionsUseCase['execute']>[0]['after'];
+      for (;;) {
+        const page = await list(organizationId, { pageSize: 2, after });
+        read.push(...page.transactions.map((t) => t.id));
+        if (!page.hasMore) break;
+        const last = page.transactions.at(-1)!;
+        after = { postedAt: last.postedAt, id: last.id };
+      }
+
+      // Newest first, so the opposite of the creation order.
+      expect(read).toEqual(created.toReversed());
+    });
+
+    it('gives an empty page for a ledger with no transactions', async () => {
+      const { organizationId } = await setup();
+
+      await expect(list(organizationId)).resolves.toEqual({ transactions: [], hasMore: false });
+    });
+
+    it('throws LedgerNotFoundError for a ledger that does not exist', async () => {
+      const { organizationId } = await setup();
+
+      await expect(list(organizationId, { ledgerName: 'missing' })).rejects.toBeInstanceOf(
+        LedgerNotFoundError,
+      );
+    });
+
+    it('does not list the transactions of another ledger of the same organization', async () => {
+      const { organizationId } = await setup();
+      await createLedger.execute({ organizationId, name: 'other', metadata: {} });
+      await move(organizationId, [posting('world', 'users:1', 1n)]);
+
+      const page = await list(organizationId, { ledgerName: 'other' });
+
+      expect(page.transactions).toEqual([]);
+    });
+
+    it('does not list the transactions of another organization', async () => {
+      const { organizationId } = await setup();
+      await move(organizationId, [posting('world', 'users:1', 1n)]);
+      const other = await setup();
+
+      const page = await list(other.organizationId);
+
+      expect(page.transactions).toEqual([]);
     });
   });
 

@@ -6,6 +6,7 @@ import { ACCOUNT_BALANCE_REPOSITORY } from './application/ports/account-balance-
 import { TRANSACTION_REPOSITORY } from './application/ports/transaction-repository.port.js';
 import { CreateTransactionUseCase } from './application/use-cases/create-transaction.use-case.js';
 import { GetTransactionUseCase } from './application/use-cases/get-transaction.use-case.js';
+import { ListTransactionsUseCase } from './application/use-cases/list-transactions.use-case.js';
 import { KyselyAccountBalanceRepository } from './infrastructure/kysely-account-balance.repository.js';
 import { KyselyTransactionRepository } from './infrastructure/kysely-transaction.repository.js';
 import { TransactionsController } from './presentation/transactions.controller.js';
@@ -25,7 +26,8 @@ import { TransactionsController } from './presentation/transactions.controller.j
     { provide: TRANSACTION_REPOSITORY, useClass: KyselyTransactionRepository },
     CreateTransactionUseCase,
     GetTransactionUseCase,
+    ListTransactionsUseCase,
   ],
-  exports: [CreateTransactionUseCase, GetTransactionUseCase],
+  exports: [CreateTransactionUseCase, GetTransactionUseCase, ListTransactionsUseCase],
 })
 export class TransactionsModule {}
