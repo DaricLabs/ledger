@@ -7,8 +7,8 @@ import {
   ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { toErrorResponse } from './to-error-response.js';
-import { ValidationFailedException } from './validation-failed-exception.js';
+import { toErrorResponse } from './error-response.mapper.js';
+import { ValidationFailedException } from './validation-failed.exception.js';
 
 describe('toErrorResponse', () => {
   it('maps a ValidationFailedException to VALIDATION with details', () => {

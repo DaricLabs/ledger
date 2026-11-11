@@ -9,7 +9,7 @@ import {
 import { Test } from '@nestjs/testing';
 import { Logger, LoggerModule, PinoLogger } from 'nestjs-pino';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildLoggerParams } from './logger-params.js';
+import { buildLoggerParams } from './logger-params.config.js';
 
 const ORG_ID = '0190a5d4-7b3c-7abc-8def-0123456789ab';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;

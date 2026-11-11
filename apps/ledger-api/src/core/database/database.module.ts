@@ -3,8 +3,8 @@ import type { OnApplicationShutdown, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { assertSafeRuntimeRole, createDb } from '@ledger/database/storage';
 import type { LedgerDatabase } from '@ledger/database/storage';
-import type { Env } from '../config/env.schema.js';
-import { KYSELY_DB } from './database.tokens.js';
+import type { Env } from '../config/env.config.js';
+import { KYSELY_DB } from './database.constant.js';
 
 const logger = new Logger('Database');
 

@@ -1,5 +1,5 @@
 import type { StandardSchemaValidationPipe } from '@nestjs/common';
-import { ValidationFailedException } from '../errors/validation-failed-exception.js';
+import { ValidationFailedException } from '../errors/validation-failed.exception.js';
 
 type Issues = Parameters<
   NonNullable<

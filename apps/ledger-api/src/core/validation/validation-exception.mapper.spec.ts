@@ -1,4 +1,4 @@
-import { toValidationException } from './to-validation-exception.js';
+import { toValidationException } from './validation-exception.mapper.js';
 
 describe('toValidationException', () => {
   it('joins path segments with dots, for keys and { key } objects', () => {

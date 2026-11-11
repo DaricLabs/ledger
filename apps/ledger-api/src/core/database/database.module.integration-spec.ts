@@ -1,7 +1,7 @@
 import { ConfigModule } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import type { LedgerDatabase } from '@ledger/database/storage';
-import { KYSELY_DB } from './database.tokens.js';
+import { KYSELY_DB } from './database.constant.js';
 import { DatabaseModule } from './database.module.js';
 
 const superuserUrl =

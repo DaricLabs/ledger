@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { withTenant, type LedgerDatabase } from '@ledger/database/storage';
 import type { TenantTransaction } from '@ledger/database';
-import { KYSELY_DB } from '../../core/database/database.tokens.js';
+import { KYSELY_DB } from '../../core/database/database.constant.js';
 import type { ITenantTransactionRunner } from '../application/ports/tenant-transaction-runner.port.js';
 
 /**

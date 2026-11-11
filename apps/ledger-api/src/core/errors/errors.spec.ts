@@ -11,7 +11,7 @@ import {
 import { Test } from '@nestjs/testing';
 import { LoggerModule } from 'nestjs-pino';
 import { z } from 'zod';
-import { buildLoggerParams } from '../logging/logger-params.js';
+import { buildLoggerParams } from '../logging/logger-params.config.js';
 import { ORGANIZATION_ID_HEADER, TenantGuard } from '../tenant/tenant.guard.js';
 import { ValidationModule } from '../validation/validation.module.js';
 import { ErrorsModule } from './errors.module.js';

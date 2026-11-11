@@ -3,7 +3,7 @@ import { Test } from '@nestjs/testing';
 import { LoggerModule } from 'nestjs-pino';
 import type { INestApplication } from '@nestjs/common';
 import { unwrapTenantTransaction, withTenant, type LedgerDatabase } from '@ledger/database/storage';
-import { KYSELY_DB } from '../core/database/database.tokens.js';
+import { KYSELY_DB } from '../core/database/database.constant.js';
 import { LEDGER_LOG_WRITER } from '../journal/application/ports/ledger-log-writer.port.js';
 import { CreateLedgerUseCase } from './application/use-cases/create-ledger.use-case.js';
 import { DeleteLedgerMetadataUseCase } from './application/use-cases/delete-ledger-metadata.use-case.js';

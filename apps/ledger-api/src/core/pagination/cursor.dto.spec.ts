@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { cursorSchema, decodeCursor, encodeCursor, MAX_CURSOR_LENGTH } from './cursor.js';
+import { cursorSchema, decodeCursor, encodeCursor, MAX_CURSOR_LENGTH } from './cursor.dto.js';
 
 /** Makes a cursor from any JSON text, the way a client could by hand. */
 const cursorOf = (text: string) => Buffer.from(text, 'utf8').toString('base64url');

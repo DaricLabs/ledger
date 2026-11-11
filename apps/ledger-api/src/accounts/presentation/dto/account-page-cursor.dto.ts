@@ -1,9 +1,9 @@
 import { z } from 'zod';
-import { cursorSchema, decodeCursor, encodeCursor } from '../../../core/pagination/cursor.js';
+import { cursorSchema, decodeCursor, encodeCursor } from '../../../core/pagination/cursor.dto.js';
 import { accountAddressSchema } from './account-address.dto.js';
 
 /**
- * The cursor of a page of accounts (see `core/pagination/cursor.ts` for the
+ * The cursor of a page of accounts (see `core/pagination/cursor.dto.ts` for the
  * format). Its content is `{"key":"users:42"}`, where `key` is the address of
  * the last account of the page. The next page starts after that address.
  */

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { LOG_LEVELS } from '../logging/log-levels.js';
+import { LOG_LEVELS } from '../logging/log-level.constant.js';
 
 // The only role the API may use. `ledger_migrator` owns the tables and
 // skips row-level security, so using it would silently turn tenant isolation off.

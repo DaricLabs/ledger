@@ -1,9 +1,9 @@
 import { z } from 'zod';
-import { cursorSchema, decodeCursor, encodeCursor } from '../../../core/pagination/cursor.js';
+import { cursorSchema, decodeCursor, encodeCursor } from '../../../core/pagination/cursor.dto.js';
 import { ledgerNameSchema } from './ledger-name.dto.js';
 
 /**
- * The cursor of a page of ledgers (see `core/pagination/cursor.ts` for the
+ * The cursor of a page of ledgers (see `core/pagination/cursor.dto.ts` for the
  * format). Its content is `{"key":"main"}`, where `key` is the name of the
  * last ledger of the page. The next page starts after that name.
  */

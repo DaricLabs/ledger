@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { DEFAULT_PAGE_SIZE, pageSizeSchema } from '../../../core/pagination/page-size.js';
+import { DEFAULT_PAGE_SIZE, pageSizeSchema } from '../../../core/pagination/page-size.dto.js';
 import { ledgerCursorSchema } from './ledger-page-cursor.dto.js';
 
 /**

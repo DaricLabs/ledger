@@ -1,4 +1,4 @@
-import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, pageSizeSchema } from './page-size.js';
+import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, pageSizeSchema } from './page-size.dto.js';
 
 describe('pageSizeSchema', () => {
   it('turns digits into a number', () => {

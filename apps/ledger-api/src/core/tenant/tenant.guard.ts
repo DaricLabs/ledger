@@ -1,8 +1,8 @@
 import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import type { CanActivate, ExecutionContext } from '@nestjs/common';
+import type { Request } from 'express';
 import { PinoLogger } from 'nestjs-pino';
 import { z } from 'zod';
-import type { TenantRequest } from './tenant-request.js';
 
 /**
  * Name of the header that carries the organization id, in lowercase
@@ -14,6 +14,15 @@ import type { TenantRequest } from './tenant-request.js';
 export const ORGANIZATION_ID_HEADER = 'x-organization-id';
 
 const organizationIdSchema = z.uuidv7();
+
+/**
+ * Express request after `TenantGuard` has run.
+ *
+ * `organizationId` is set by the guard and nowhere else. It is `undefined`
+ * on routes without the guard, so read it with `@OrganizationId()` and not
+ * directly from the request.
+ */
+export type TenantRequest = Request & { organizationId?: string };
 
 /**
  * Reads the organization id from the trusted `X-Organization-Id` header and
