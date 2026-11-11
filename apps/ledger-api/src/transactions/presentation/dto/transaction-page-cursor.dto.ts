@@ -1,10 +1,10 @@
 import { z } from 'zod';
-import { cursorSchema, decodeCursor, encodeCursor } from '../../../core/pagination/cursor.js';
+import { cursorSchema, decodeCursor, encodeCursor } from '../../../core/pagination/cursor.dto.js';
 import type { ITransactionPosition } from '../../application/ports/transaction-repository.port.js';
 import { transactionIdSchema } from './transaction-id.dto.js';
 
 /**
- * The cursor of a page of transactions (see `core/pagination/cursor.ts` for
+ * The cursor of a page of transactions (see `core/pagination/cursor.dto.ts` for
  * the format). Its content is `{"postedAt":"2026-11-07T10:00:00.000Z","id":"..."}`:
  * the `postedAt` and the `id` of the last transaction of the page. The next
  * page starts after that transaction, so it holds older ones.

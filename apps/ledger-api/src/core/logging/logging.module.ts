@@ -1,8 +1,8 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { LoggerModule } from 'nestjs-pino';
-import type { LogLevel } from './log-levels.js';
-import { buildLoggerParams } from './logger-params.js';
+import { buildLoggerParams } from './logger-params.config.js';
+import { Env } from '../config/env.config.js';
 
 const SERVICE_NAME = 'ledger-api';
 
@@ -18,11 +18,11 @@ const SERVICE_NAME = 'ledger-api';
     LoggerModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (config: ConfigService) =>
+      useFactory: (config: ConfigService<Env, true>) =>
         buildLoggerParams({
           serviceName: SERVICE_NAME,
-          level: config.getOrThrow<LogLevel>('LOG_LEVEL'),
-          pretty: config.getOrThrow<boolean>('LOG_PRETTY'),
+          level: config.get('LOG_LEVEL', { infer: true }),
+          pretty: config.get('LOG_PRETTY', { infer: true }),
         }),
     }),
   ],

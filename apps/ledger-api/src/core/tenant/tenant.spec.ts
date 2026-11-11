@@ -2,7 +2,7 @@ import { Writable } from 'node:stream';
 import { Controller, Get, UseGuards, type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { LoggerModule } from 'nestjs-pino';
-import { buildLoggerParams } from '../logging/logger-params.js';
+import { buildLoggerParams } from '../logging/logger-params.config.js';
 import { OrganizationId } from './organization-id.decorator.js';
 import { ORGANIZATION_ID_HEADER, TenantGuard } from './tenant.guard.js';
 

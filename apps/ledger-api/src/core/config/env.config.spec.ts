@@ -1,5 +1,5 @@
-import { LOG_LEVELS } from '../logging/log-levels.js';
-import { envSchema } from './env.schema.js';
+import { LOG_LEVELS } from '../logging/log-level.constant.js';
+import { envSchema } from './env.config.js';
 
 const databaseUrl = 'postgres://ledger_runtime:secret-pass@localhost:5432/ledger';
 

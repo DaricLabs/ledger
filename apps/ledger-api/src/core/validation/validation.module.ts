@@ -1,6 +1,6 @@
 import { Module, StandardSchemaValidationPipe } from '@nestjs/common';
 import { APP_PIPE } from '@nestjs/core';
-import { toValidationException } from './to-validation-exception.js';
+import { toValidationException } from './validation-exception.mapper.js';
 
 /**
  * Turns on `@Body({ schema })`, `@Query({ schema })` and `@Param({ schema })`

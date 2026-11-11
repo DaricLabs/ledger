@@ -1,6 +1,6 @@
 import { createParamDecorator } from '@nestjs/common';
 import type { ExecutionContext } from '@nestjs/common';
-import type { TenantRequest } from './tenant-request.js';
+import type { TenantRequest } from './tenant.guard.js';
 
 /**
  * Parameter decorator that gives a controller method the organization id

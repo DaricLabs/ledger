@@ -1,5 +1,5 @@
 /** One invalid field in a `VALIDATION` error. `path` is dotted, like `postings.0.amount`. */
-export interface ErrorDetail {
+export interface IErrorDetail {
   path: string;
   message: string;
 }
@@ -12,8 +12,8 @@ export interface ErrorDetail {
  * from a feature, like `LEDGER_NOT_FOUND`.
  * `details` is only sent for `VALIDATION` errors.
  */
-export interface ErrorResponse {
+export interface IErrorResponse {
   errorCode: string;
   errorMessage: string;
-  details?: ErrorDetail[];
+  details?: IErrorDetail[];
 }
