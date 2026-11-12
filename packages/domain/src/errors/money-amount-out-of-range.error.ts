@@ -1,4 +1,4 @@
-import { ValueObjectError } from './value-object-error.js';
+import { ValueObjectError } from './value-object.error.js';
 
 /**
  * An amount of money is bigger (or smaller) than the storage can hold.

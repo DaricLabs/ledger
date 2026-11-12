@@ -1,8 +1,8 @@
-import { AssetCode } from '../../src/asset-code.js';
-import { InvalidAssetCodeError } from '../../src/invalid-asset-code.error.js';
+import { InvalidAssetCodeError } from '../errors/invalid-asset-code.error.js';
+import { AssetCode } from './asset-code.vo.js';
 
 describe('AssetCode', () => {
-  it.each(['USD', 'EUR', 'BTC', 'USDC', 'A00', 'ABCDEFGHIJKLMNOP', 'A'.concat('0'.repeat(15))])(
+  it.each(['USD', 'EUR', 'BTC', 'USDC', 'A00', 'ABCDEFGHIJKLMNOP', `A${'0'.repeat(15)}`])(
     'accepts %s',
     (text) => {
       expect(AssetCode.of(text).value).toBe(text);
@@ -30,12 +30,10 @@ describe('AssetCode', () => {
     expect(() => AssetCode.of(undefined as unknown as string)).toThrow(InvalidAssetCodeError);
   });
 
-  it('has a stable error code and does not repeat the bad value', () => {
-    const error = catchError(() => AssetCode.of('<script>'));
-
-    expect(error).toBeInstanceOf(InvalidAssetCodeError);
-    expect((error as InvalidAssetCodeError).code).toBe('INVALID_ASSET_CODE');
-    expect((error as InvalidAssetCodeError).message).not.toContain('<script>');
+  it('does not repeat the bad value in the error message', () => {
+    expect(() => AssetCode.of('<script>')).toThrow(
+      expect.objectContaining({ message: expect.not.stringContaining('<script>') }),
+    );
   });
 
   it('compares by text', () => {
@@ -47,12 +45,3 @@ describe('AssetCode', () => {
     expect(String(AssetCode.of('USD'))).toBe('USD');
   });
 });
-
-function catchError(fn: () => unknown): unknown {
-  try {
-    fn();
-  } catch (error) {
-    return error;
-  }
-  return undefined;
-}

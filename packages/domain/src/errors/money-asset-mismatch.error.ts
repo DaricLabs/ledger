@@ -1,4 +1,4 @@
-import { ValueObjectError } from './value-object-error.js';
+import { ValueObjectError } from './value-object.error.js';
 
 /**
  * Two amounts of money were combined, but they are in different assets (for

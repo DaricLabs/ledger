@@ -1,4 +1,4 @@
-import { InvalidAssetCodeError } from './invalid-asset-code.error.js';
+import { InvalidAssetCodeError } from '../errors/invalid-asset-code.error.js';
 
 /**
  * Allowed shape of an asset code: 3 to 16 characters, uppercase letters and
@@ -19,9 +19,8 @@ export const ASSET_CODE_PATTERN = /^[A-Z][A-Z0-9]{2,15}$/;
  * the same text are equal. Make one with `AssetCode.of`, which checks the
  * rules, so a value of this type is always valid.
  *
- * Amounts are always whole numbers of the smallest unit of the asset (cents
- * for USD, satoshi for BTC). How many decimals the asset has is a question
- * for the layer that shows money to people, not for this class.
+ * It does not know how many decimals the asset has. That is a question for
+ * the layer that shows money to people (see `Money` for how amounts work).
  */
 export class AssetCode {
   private constructor(private readonly text: string) {}

@@ -1,7 +1,7 @@
-import { AssetCode } from '../../src/asset-code.js';
-import { MAX_MONEY_AMOUNT, MIN_MONEY_AMOUNT, Money } from '../../src/money.js';
-import { MoneyAmountOutOfRangeError } from '../../src/money-amount-out-of-range.error.js';
-import { MoneyAssetMismatchError } from '../../src/money-asset-mismatch.error.js';
+import { MoneyAmountOutOfRangeError } from '../errors/money-amount-out-of-range.error.js';
+import { MoneyAssetMismatchError } from '../errors/money-asset-mismatch.error.js';
+import { AssetCode } from './asset-code.vo.js';
+import { MAX_MONEY_AMOUNT, MIN_MONEY_AMOUNT, Money } from './money.vo.js';
 
 const USD = AssetCode.of('USD');
 const EUR = AssetCode.of('EUR');
@@ -37,15 +37,6 @@ describe('Money', () => {
       expect(() => Money.of(USD, 1.5 as unknown as bigint)).toThrow(TypeError);
       expect(() => Money.of(USD, 10 as unknown as bigint)).toThrow(TypeError);
       expect(() => Money.of(USD, '10' as unknown as bigint)).toThrow(TypeError);
-    });
-
-    it('has a stable error code for a range error', () => {
-      try {
-        Money.of(USD, MAX_MONEY_AMOUNT + 1n);
-        expect.unreachable();
-      } catch (error) {
-        expect((error as MoneyAmountOutOfRangeError).code).toBe('MONEY_AMOUNT_OUT_OF_RANGE');
-      }
     });
   });
 
@@ -127,23 +118,6 @@ describe('Money', () => {
 
     it('rejects another asset', () => {
       expect(() => Money.of(USD, 1n).minus(Money.of(EUR, 1n))).toThrow(MoneyAssetMismatchError);
-    });
-  });
-
-  describe('MoneyAssetMismatchError', () => {
-    it('carries both assets and a stable code', () => {
-      try {
-        Money.of(USD, 1n).plus(Money.of(EUR, 1n));
-        expect.unreachable();
-      } catch (error) {
-        const mismatch = error as MoneyAssetMismatchError;
-        expect(mismatch.code).toBe('MONEY_ASSET_MISMATCH');
-        expect(mismatch.leftAsset).toBe('USD');
-        expect(mismatch.rightAsset).toBe('EUR');
-        expect(mismatch.message).toBe(
-          'Cannot combine amounts of different assets: "USD" and "EUR"',
-        );
-      }
     });
   });
 

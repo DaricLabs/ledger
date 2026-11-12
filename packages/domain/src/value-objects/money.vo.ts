@@ -1,6 +1,6 @@
-import type { AssetCode } from './asset-code.js';
-import { MoneyAmountOutOfRangeError } from './money-amount-out-of-range.error.js';
-import { MoneyAssetMismatchError } from './money-asset-mismatch.error.js';
+import type { AssetCode } from './asset-code.vo.js';
+import { MoneyAmountOutOfRangeError } from '../errors/money-amount-out-of-range.error.js';
+import { MoneyAssetMismatchError } from '../errors/money-asset-mismatch.error.js';
 
 /**
  * The biggest amount `Money` can hold: 10^78 - 1, the biggest number with
