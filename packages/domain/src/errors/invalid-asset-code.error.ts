@@ -1,4 +1,4 @@
-import { ValueObjectError } from './value-object-error.js';
+import { ValueObjectError } from './value-object.error.js';
 
 /**
  * A text is not a valid asset code. See `ASSET_CODE_PATTERN` for the rules.

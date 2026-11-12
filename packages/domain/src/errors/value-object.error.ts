@@ -1,4 +1,4 @@
-import { DomainError } from './domain-error.js';
+import { DomainError } from './domain.error.js';
 
 /**
  * Base class of every error raised by the shared value objects of this

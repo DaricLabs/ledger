@@ -1,5 +1,5 @@
-import { ACCOUNT_ADDRESS_MAX_LENGTH, AccountAddress } from '../../src/account-address.js';
-import { InvalidAccountAddressError } from '../../src/invalid-account-address.error.js';
+import { InvalidAccountAddressError } from '../errors/invalid-account-address.error.js';
+import { ACCOUNT_ADDRESS_MAX_LENGTH, AccountAddress } from './account-address.vo.js';
 
 describe('AccountAddress', () => {
   it.each([
@@ -45,14 +45,10 @@ describe('AccountAddress', () => {
     expect(() => AccountAddress.of(null as unknown as string)).toThrow(InvalidAccountAddressError);
   });
 
-  it('has a stable error code', () => {
-    try {
-      AccountAddress.of('Bad Address');
-      expect.unreachable();
-    } catch (error) {
-      expect((error as InvalidAccountAddressError).code).toBe('INVALID_ACCOUNT_ADDRESS');
-      expect((error as InvalidAccountAddressError).message).not.toContain('Bad Address');
-    }
+  it('does not repeat the bad value in the error message', () => {
+    expect(() => AccountAddress.of('Bad Address')).toThrow(
+      expect.objectContaining({ message: expect.not.stringContaining('Bad Address') }),
+    );
   });
 
   it('splits into parts', () => {

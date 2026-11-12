@@ -1,4 +1,4 @@
-import { InvalidAccountAddressError } from './invalid-account-address.error.js';
+import { InvalidAccountAddressError } from '../errors/invalid-account-address.error.js';
 
 /**
  * Allowed shape of an account address: parts separated by `:`. Each part
@@ -23,7 +23,8 @@ export const ACCOUNT_ADDRESS_MAX_LENGTH = 256;
  *
  * The `:` splits an address into parts, like folders in a path. The ledger
  * does not give the parts any meaning. `users:42:main` is just a name, and
- * the ledger does not know that `users:42` exists.
+ * the ledger does not know that `users:42` exists. Use `segments` when you
+ * need the parts, so no one splits the text by hand.
  */
 export class AccountAddress {
   /**
@@ -38,6 +39,8 @@ export class AccountAddress {
    * @throws {InvalidAccountAddressError} If the text is too long or does not follow `ACCOUNT_ADDRESS_PATTERN`.
    */
   static of(value: string): AccountAddress {
+    // The type check comes first on purpose: the pattern turns `null` or `42`
+    // into text before it checks, and the text "null" is a valid address.
     if (
       typeof value !== 'string' ||
       value.length > ACCOUNT_ADDRESS_MAX_LENGTH ||
@@ -59,7 +62,7 @@ export class AccountAddress {
   }
 
   isWorld(): boolean {
-    return this.text === AccountAddress.WORLD.text;
+    return this.equals(AccountAddress.WORLD);
   }
 
   equals(other: AccountAddress): boolean {

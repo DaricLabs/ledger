@@ -24,9 +24,13 @@
  * ```ts
  * export class LedgerAlreadyExistsError extends LedgerDomainError {
  *   readonly code = 'LEDGER_ALREADY_EXISTS';
+ *
+ *   constructor(readonly ledgerName: string) {
+ *     super(`Ledger "${ledgerName}" already exists`);
+ *   }
  * }
  *
- * const error = new LedgerAlreadyExistsError('ledger 42 already exists');
+ * const error = new LedgerAlreadyExistsError('main');
  * error.name; // 'LedgerAlreadyExistsError'
  * error.code; // 'LEDGER_ALREADY_EXISTS'
  * ```
