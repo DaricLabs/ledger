@@ -1,8 +1,8 @@
+import { randomUUIDv7 } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
 import { unwrapTenantTransaction, withTenant, type DB } from '../../src/storage.js';
 import { createRuntimeDb, inTenant } from '../support/db.js';
 import { insertLedger } from '../support/fixtures.js';
-import { uuidv7 } from '../support/uuidv7.js';
 
 describe('withTenant', () => {
   let db: Kysely<DB>;
@@ -30,7 +30,7 @@ describe('withTenant', () => {
   }
 
   it('makes current_organization_id() return the given tenant inside the callback', async () => {
-    const organizationId = uuidv7();
+    const organizationId = randomUUIDv7();
 
     const seen = await withTenant(db, organizationId, async (tenantTrx) => {
       const { rows } = await sql<{ id: string }>`
@@ -43,7 +43,7 @@ describe('withTenant', () => {
   });
 
   it('commits when the callback resolves, and returns its value', async () => {
-    const organizationId = uuidv7();
+    const organizationId = randomUUIDv7();
 
     const ledger = await inTenant(db, organizationId, (trx) => insertLedger(trx, organizationId));
 
@@ -51,9 +51,9 @@ describe('withTenant', () => {
   });
 
   it('rolls back and rethrows the same error when the callback fails', async () => {
-    const organizationId = uuidv7();
+    const organizationId = randomUUIDv7();
     const failure = new Error('something went wrong');
-    const ledgerId = uuidv7();
+    const ledgerId = randomUUIDv7();
 
     await expect(
       inTenant(db, organizationId, async (trx) => {
@@ -66,8 +66,8 @@ describe('withTenant', () => {
   });
 
   it('rolls back everything when a statement fails half way', async () => {
-    const organizationId = uuidv7();
-    const ledgerId = uuidv7();
+    const organizationId = randomUUIDv7();
+    const ledgerId = randomUUIDv7();
 
     await expect(
       inTenant(db, organizationId, async (trx) => {
@@ -83,7 +83,7 @@ describe('withTenant', () => {
     it('does not leave the tenant on the connection after commit', async () => {
       const single = createRuntimeDb(1); // one connection, so every query reuses it
       try {
-        await withTenant(single, uuidv7(), async () => undefined);
+        await withTenant(single, randomUUIDv7(), async () => undefined);
 
         expect(await currentTenant(single)).toBeNull();
       } finally {
@@ -95,7 +95,7 @@ describe('withTenant', () => {
       const single = createRuntimeDb(1);
       try {
         await expect(
-          withTenant(single, uuidv7(), async () => {
+          withTenant(single, randomUUIDv7(), async () => {
             throw new Error('boom');
           }),
         ).rejects.toThrow('boom');
@@ -107,7 +107,7 @@ describe('withTenant', () => {
     });
 
     it('keeps tenants apart when many transactions run at the same time', async () => {
-      const organizationIds = Array.from({ length: 12 }, () => uuidv7());
+      const organizationIds = Array.from({ length: 12 }, () => randomUUIDv7());
 
       const seen = await Promise.all(
         organizationIds.map((organizationId) =>
@@ -130,7 +130,7 @@ describe('withTenant', () => {
     it('does not allow writes: a plain query has no tenant, so RLS refuses it', async () => {
       const insert = db
         .insertInto('ledgers')
-        .values({ id: uuidv7(), organization_id: uuidv7(), name: 'no-tenant' })
+        .values({ id: randomUUIDv7(), organization_id: randomUUIDv7(), name: 'no-tenant' })
         .execute();
 
       await expect(insert).rejects.toMatchObject({

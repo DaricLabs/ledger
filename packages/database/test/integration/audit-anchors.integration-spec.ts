@@ -1,8 +1,8 @@
+import { randomUUIDv7 } from 'node:crypto';
 import type { Kysely } from 'kysely';
 import type { DB } from '../../src/storage.js';
 import { createRuntimeDb, inTenant } from '../support/db.js';
 import { insertAnchor, insertLedger, insertLog, sha256Like } from '../support/fixtures.js';
-import { uuidv7 } from '../support/uuidv7.js';
 
 const LOGS_PER_LEDGER = 6;
 
@@ -19,7 +19,7 @@ describe('ledger_audit_anchors', () => {
 
   /** A ledger that already has logs 1..6, so anchors have something to cover. */
   async function ledgerWithLogs(
-    org: string = uuidv7(),
+    org: string = randomUUIDv7(),
   ): Promise<{ org: string; ledgerId: string }> {
     const ledgerId = await inTenant(db, org, async (trx) => {
       const ledger = await insertLedger(trx, org);
@@ -147,7 +147,7 @@ describe('ledger_audit_anchors', () => {
   });
 
   it('chains every ledger on its own', async () => {
-    const org = uuidv7();
+    const org = randomUUIDv7();
     const one = await ledgerWithLogs(org);
     const two = await ledgerWithLogs(org);
 

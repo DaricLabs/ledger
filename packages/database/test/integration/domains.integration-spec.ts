@@ -1,7 +1,7 @@
+import { randomUUIDv7 } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '../../src/storage.js';
 import { createRuntimeDb } from '../support/db.js';
-import { uuidv7 } from '../support/uuidv7.js';
 
 // Values are cast to each domain directly (`$1::domain`), so these tests check
 // the domain rules alone, with no table or tenant needed.
@@ -19,7 +19,7 @@ interface DomainCase {
 const CASES: DomainCase[] = [
   {
     domain: 'uuidv7',
-    valid: [uuidv7(), '0190a5d4-7b3c-7abc-8def-0123456789ab'],
+    valid: [randomUUIDv7(), '0190a5d4-7b3c-7abc-8def-0123456789ab'],
     invalid: [
       '5f1c2e0e-3f55-4a3c-9d6b-3f2d6c2d8a11', // version 4
       '00000000-0000-0000-0000-000000000000', // nil UUID

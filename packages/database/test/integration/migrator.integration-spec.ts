@@ -1,13 +1,13 @@
 import { sql, type Kysely } from 'kysely';
 import { migrateToLatest } from '../../src/migrator.js';
-import { createDb } from '../support/db.js';
+import { createTestDb } from '../support/db.js';
 import { testDatabaseUrls } from '../support/config.js';
 
 describe('migrateToLatest', () => {
   let db: Kysely<unknown>;
 
   beforeAll(() => {
-    db = createDb<unknown>(testDatabaseUrls.migrator, 2);
+    db = createTestDb<unknown>(testDatabaseUrls.migrator, 2);
   });
 
   afterAll(async () => {

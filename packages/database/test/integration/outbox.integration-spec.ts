@@ -1,8 +1,8 @@
+import { randomUUIDv7 } from 'node:crypto';
 import { sql, type Kysely, type Transaction } from 'kysely';
 import type { DB } from '../../src/storage.js';
 import { createRuntimeDb, inTenant } from '../support/db.js';
 import { insertLedger, insertOutboxEvent } from '../support/fixtures.js';
-import { uuidv7 } from '../support/uuidv7.js';
 
 describe('outbox_events', () => {
   let db: Kysely<DB>;
@@ -19,7 +19,7 @@ describe('outbox_events', () => {
   async function withLedger<T>(
     fn: (trx: Transaction<DB>, org: string, ledgerId: string) => Promise<T>,
   ): Promise<T> {
-    const org = uuidv7();
+    const org = randomUUIDv7();
     return inTenant(db, org, async (trx) => {
       const ledger = await insertLedger(trx, org);
       return fn(trx, org, ledger.id);

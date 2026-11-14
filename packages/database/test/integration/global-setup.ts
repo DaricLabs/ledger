@@ -1,7 +1,7 @@
 import { Kysely, sql } from 'kysely';
 import { migrateToLatest } from '../../src/migrator.js';
 import { testDatabaseUrls } from '../support/config.js';
-import { createDb } from '../support/db.js';
+import { createTestDb } from '../support/db.js';
 
 const HELP = `
 Could not prepare the test database. The integration tests need the Postgres
@@ -19,8 +19,8 @@ and never clean it up.
 
 /** Runs once before all integration test files. */
 export async function setup(): Promise<void> {
-  const migrator = createDb<unknown>(testDatabaseUrls.migrator, 1);
-  const runtime = createDb<unknown>(testDatabaseUrls.runtime, 1);
+  const migrator = createTestDb<unknown>(testDatabaseUrls.migrator, 1);
+  const runtime = createTestDb<unknown>(testDatabaseUrls.runtime, 1);
 
   try {
     // Fail early (and clearly) if a role or the server is missing.

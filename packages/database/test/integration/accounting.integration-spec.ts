@@ -1,3 +1,4 @@
+import { randomUUIDv7 } from 'node:crypto';
 import type { Kysely, Transaction } from 'kysely';
 import type { DB } from '../../src/storage.js';
 import { createRuntimeDb, inTenant } from '../support/db.js';
@@ -8,7 +9,6 @@ import {
   insertTransaction,
   randomName,
 } from '../support/fixtures.js';
-import { uuidv7 } from '../support/uuidv7.js';
 
 const UINT256_MAX = (2n ** 256n - 1n).toString();
 const CHECK_VIOLATION = '23514';
@@ -28,7 +28,7 @@ describe('ledgers, accounts, transactions and postings', () => {
 
   describe('ledgers', () => {
     it('starts with empty metadata and no logs', async () => {
-      const org = uuidv7();
+      const org = randomUUIDv7();
 
       const ledger = await inTenant(db, org, async (trx) => {
         const { id } = await insertLedger(trx, org);
@@ -40,7 +40,7 @@ describe('ledgers, accounts, transactions and postings', () => {
     });
 
     it('does not allow two ledgers with the same name in one organization', async () => {
-      const org = uuidv7();
+      const org = randomUUIDv7();
       const name = randomName();
 
       await expect(
@@ -53,7 +53,7 @@ describe('ledgers, accounts, transactions and postings', () => {
 
     it('allows the same ledger name in different organizations', async () => {
       const name = randomName();
-      const [orgA, orgB] = [uuidv7(), uuidv7()];
+      const [orgA, orgB] = [randomUUIDv7(), randomUUIDv7()];
 
       await inTenant(db, orgA, (trx) => insertLedger(trx, orgA, { name }));
       await inTenant(db, orgB, (trx) => insertLedger(trx, orgB, { name }));
@@ -62,7 +62,7 @@ describe('ledgers, accounts, transactions and postings', () => {
 
   describe('accounts', () => {
     it('does not allow overdraft by default', async () => {
-      const org = uuidv7();
+      const org = randomUUIDv7();
 
       const account = await inTenant(db, org, async (trx) => {
         const ledger = await insertLedger(trx, org);
@@ -75,15 +75,15 @@ describe('ledgers, accounts, transactions and postings', () => {
     });
 
     it('needs an existing ledger', async () => {
-      const org = uuidv7();
+      const org = randomUUIDv7();
 
       await expect(
-        inTenant(db, org, (trx) => insertAccount(trx, org, uuidv7(), 'users:1')),
+        inTenant(db, org, (trx) => insertAccount(trx, org, randomUUIDv7(), 'users:1')),
       ).rejects.toMatchObject({ code: FOREIGN_KEY_VIOLATION });
     });
 
     it('cannot point at a ledger of another organization (composite foreign key)', async () => {
-      const [orgA, orgB] = [uuidv7(), uuidv7()];
+      const [orgA, orgB] = [randomUUIDv7(), randomUUIDv7()];
       const ledgerOfB = await inTenant(db, orgB, (trx) => insertLedger(trx, orgB));
 
       await expect(
@@ -92,7 +92,7 @@ describe('ledgers, accounts, transactions and postings', () => {
     });
 
     it('has unique addresses inside a ledger, but not across ledgers', async () => {
-      const org = uuidv7();
+      const org = randomUUIDv7();
 
       await inTenant(db, org, async (trx) => {
         const one = await insertLedger(trx, org);
@@ -115,7 +115,7 @@ describe('ledgers, accounts, transactions and postings', () => {
     async function withLedger<T>(
       fn: (trx: Transaction<DB>, org: string, ledgerId: string) => Promise<T>,
     ): Promise<T> {
-      const org = uuidv7();
+      const org = randomUUIDv7();
       return inTenant(db, org, async (trx) => {
         const ledger = await insertLedger(trx, org);
         return fn(trx, org, ledger.id);
@@ -139,7 +139,7 @@ describe('ledgers, accounts, transactions and postings', () => {
     });
 
     it('allows the same reference in different ledgers', async () => {
-      const org = uuidv7();
+      const org = randomUUIDv7();
 
       await inTenant(db, org, async (trx) => {
         const one = await insertLedger(trx, org);
@@ -189,7 +189,7 @@ describe('ledgers, accounts, transactions and postings', () => {
 
     it.each([
       ['only reverted_at', { reverted_at: new Date() }],
-      ['only reverted_by_transaction_id', { reverted_by_transaction_id: uuidv7() }],
+      ['only reverted_by_transaction_id', { reverted_by_transaction_id: randomUUIDv7() }],
     ])('rejects a revert with %s', async (_label, fields) => {
       await expect(
         withLedger(async (trx, org, ledgerId) => {
@@ -208,7 +208,7 @@ describe('ledgers, accounts, transactions and postings', () => {
           const id = await insertTransaction(trx, org, ledgerId);
           await trx
             .updateTable('transactions')
-            .set({ reverted_at: new Date(), reverted_by_transaction_id: uuidv7() })
+            .set({ reverted_at: new Date(), reverted_by_transaction_id: randomUUIDv7() })
             .where('id', '=', id)
             .execute();
         }),
@@ -244,7 +244,7 @@ describe('ledgers, accounts, transactions and postings', () => {
         ids: { org: string; ledgerId: string; transactionId: string },
       ) => Promise<T>,
     ): Promise<T> {
-      const org = uuidv7();
+      const org = randomUUIDv7();
       return inTenant(db, org, async (trx) => {
         const ledger = await insertLedger(trx, org);
         await insertAccount(trx, org, ledger.id, 'world');
