@@ -3,7 +3,7 @@ import { Pool } from 'pg';
 import { unwrapTenantTransaction, withTenant, type DB } from '../../src/storage.js';
 import { testDatabaseUrls } from './config.js';
 
-export function createDb<T = DB>(connectionString: string, maxConnections = 5): Kysely<T> {
+export function createTestDb<T = DB>(connectionString: string, maxConnections = 5): Kysely<T> {
   return new Kysely<T>({
     dialect: new PostgresDialect({
       pool: new Pool({ connectionString, max: maxConnections, connectionTimeoutMillis: 10_000 }),
@@ -13,12 +13,12 @@ export function createDb<T = DB>(connectionString: string, maxConnections = 5): 
 
 /** Connects as `ledger_runtime`, the role the apps use. RLS and grants apply. */
 export function createRuntimeDb(maxConnections?: number): Kysely<DB> {
-  return createDb(testDatabaseUrls.runtime, maxConnections);
+  return createTestDb(testDatabaseUrls.runtime, maxConnections);
 }
 
 /** Connects as `ledger_migrator`, the table owner. It bypasses RLS and has all privileges. */
 export function createMigratorDb(maxConnections?: number): Kysely<DB> {
-  return createDb(testDatabaseUrls.migrator, maxConnections);
+  return createTestDb(testDatabaseUrls.migrator, maxConnections);
 }
 
 /**

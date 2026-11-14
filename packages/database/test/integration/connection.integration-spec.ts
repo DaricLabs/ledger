@@ -1,3 +1,4 @@
+import { randomUUIDv7 } from 'node:crypto';
 import { sql } from 'kysely';
 import {
   createDb,
@@ -6,9 +7,8 @@ import {
   type LedgerDatabase,
 } from '../../src/storage.js';
 import { testDatabaseUrls } from '../support/config.js';
-import { inTenant } from '../support/db.js';
 import { insertLedger } from '../support/fixtures.js';
-import { uuidv7 } from '../support/uuidv7.js';
+import { inTenant } from '../support/db.js';
 
 describe('createDb', () => {
   let db: LedgerDatabase;
@@ -28,8 +28,8 @@ describe('createDb', () => {
   });
 
   it('gives a client that works with withTenant, so row-level security applies', async () => {
-    const organizationId = uuidv7();
-    const otherOrganizationId = uuidv7();
+    const organizationId = randomUUIDv7();
+    const otherOrganizationId = randomUUIDv7();
     const ledger = await inTenant(db, organizationId, (trx) => insertLedger(trx, organizationId));
 
     const seenByOwner = await withTenant(db, organizationId, (tenantTrx) =>
@@ -59,7 +59,7 @@ describe('createDb', () => {
     try {
       const results = await Promise.all(
         [1, 2, 3].map((n) =>
-          withTenant(single, uuidv7(), async (tenantTrx) => {
+          withTenant(single, randomUUIDv7(), async (tenantTrx) => {
             await sql`select pg_sleep(0.02)`.execute(unwrapTenantTransaction(tenantTrx));
             return n;
           }),

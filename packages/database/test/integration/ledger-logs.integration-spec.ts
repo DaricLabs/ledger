@@ -1,8 +1,8 @@
+import { randomUUIDv7 } from 'node:crypto';
 import type { Kysely } from 'kysely';
 import type { DB } from '../../src/storage.js';
 import { createRuntimeDb, inTenant } from '../support/db.js';
 import { insertLedger, insertLog } from '../support/fixtures.js';
-import { uuidv7 } from '../support/uuidv7.js';
 
 describe('ledger_logs', () => {
   let db: Kysely<DB>;
@@ -15,7 +15,9 @@ describe('ledger_logs', () => {
     await db.destroy();
   });
 
-  async function newLedger(org: string = uuidv7()): Promise<{ org: string; ledgerId: string }> {
+  async function newLedger(
+    org: string = randomUUIDv7(),
+  ): Promise<{ org: string; ledgerId: string }> {
     const ledger = await inTenant(db, org, (trx) => insertLedger(trx, org));
     return { org, ledgerId: ledger.id };
   }
@@ -53,7 +55,7 @@ describe('ledger_logs', () => {
     });
 
     it('has a separate counter for every ledger', async () => {
-      const org = uuidv7();
+      const org = randomUUIDv7();
       const one = await newLedger(org);
       const two = await newLedger(org);
 
@@ -153,7 +155,9 @@ describe('ledger_logs', () => {
       const { org, ledgerId } = await newLedger();
 
       await expect(
-        inTenant(db, org, (trx) => insertLog(trx, org, ledgerId, { transactionId: uuidv7() })),
+        inTenant(db, org, (trx) =>
+          insertLog(trx, org, ledgerId, { transactionId: randomUUIDv7() }),
+        ),
       ).rejects.toMatchObject({ code: '23503' });
     });
   });

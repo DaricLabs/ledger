@@ -9,7 +9,7 @@ import {
   type QueryResult,
 } from 'kysely';
 
-export type RecordedEvent =
+type RecordedEvent =
   | { type: 'begin' }
   | { type: 'commit' }
   | { type: 'rollback' }

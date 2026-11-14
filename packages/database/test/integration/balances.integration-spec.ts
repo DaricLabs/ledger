@@ -1,8 +1,8 @@
+import { randomUUIDv7 } from 'node:crypto';
 import { sql, type Kysely, type Transaction } from 'kysely';
 import type { DB } from '../../src/storage.js';
 import { createRuntimeDb, inTenant } from '../support/db.js';
 import { insertAccount, insertLedger } from '../support/fixtures.js';
-import { uuidv7 } from '../support/uuidv7.js';
 
 const CHECK_VIOLATION = '23514';
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -27,7 +27,7 @@ describe('balances', () => {
   async function createLedgerWithAccounts(
     accounts: Record<string, { allowOverdraft: boolean }>,
   ): Promise<Setup> {
-    const org = uuidv7();
+    const org = randomUUIDv7();
     const ledgerId = await inTenant(db, org, async (trx) => {
       const ledger = await insertLedger(trx, org);
       for (const [address, options] of Object.entries(accounts)) {

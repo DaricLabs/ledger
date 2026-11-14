@@ -2,7 +2,7 @@ import { sql, type Kysely, type Transaction } from 'kysely';
 import type { DB } from '../../src/storage.js';
 import { createRuntimeDb, inTenant } from '../support/db.js';
 import { insertIdempotencyKey, insertLedger, randomName, sha256Like } from '../support/fixtures.js';
-import { uuidv7 } from '../support/uuidv7.js';
+import { randomUUIDv7 } from 'node:crypto';
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -21,7 +21,7 @@ describe('idempotency_keys', () => {
   async function withLedger<T>(
     fn: (trx: Transaction<DB>, org: string, ledgerId: string) => Promise<T>,
   ): Promise<T> {
-    const org = uuidv7();
+    const org = randomUUIDv7();
     return inTenant(db, org, async (trx) => {
       const ledger = await insertLedger(trx, org);
       return fn(trx, org, ledger.id);

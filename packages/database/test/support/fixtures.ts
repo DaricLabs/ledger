@@ -1,8 +1,7 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUIDv7 } from 'node:crypto';
 import type { Kysely, Transaction } from 'kysely';
 import type { DB } from '../../src/storage.js';
 import { inTenant } from './db.js';
-import { uuidv7 } from './uuidv7.js';
 
 /** Small insert helpers. Each one inserts one row and uses valid defaults. */
 
@@ -15,7 +14,7 @@ export async function insertLedger(
   organizationId: string,
   values: { id?: string; name?: string } = {},
 ): Promise<{ id: string; name: string }> {
-  const id = values.id ?? uuidv7();
+  const id = values.id ?? randomUUIDv7();
   const name = values.name ?? randomName();
   await trx.insertInto('ledgers').values({ id, organization_id: organizationId, name }).execute();
   return { id, name };
@@ -45,7 +44,7 @@ export async function insertTransaction(
   ledgerId: string,
   values: { id?: string; reference?: string | null } = {},
 ): Promise<string> {
-  const id = values.id ?? uuidv7();
+  const id = values.id ?? randomUUIDv7();
   await trx
     .insertInto('transactions')
     .values({
@@ -125,7 +124,7 @@ export async function insertAnchor(
   await trx
     .insertInto('ledger_audit_anchors')
     .values({
-      id: uuidv7(),
+      id: randomUUIDv7(),
       organization_id: organizationId,
       ledger_id: ledgerId,
       from_log_seq: values.from,
@@ -156,7 +155,7 @@ export async function insertOutboxEvent(
       organization_id: organizationId,
       ledger_id: ledgerId,
       aggregate_type: 'transaction',
-      aggregate_id: uuidv7(),
+      aggregate_id: randomUUIDv7(),
       event_type: 'ledger.transaction.created',
       payload: {},
       ...values,
@@ -216,7 +215,7 @@ export interface SeededTenant {
  */
 export async function seedTenant(
   db: Kysely<DB>,
-  organizationId: string = uuidv7(),
+  organizationId: string = randomUUIDv7(),
 ): Promise<SeededTenant> {
   return inTenant(db, organizationId, async (trx) => {
     const ledger = await insertLedger(trx, organizationId);

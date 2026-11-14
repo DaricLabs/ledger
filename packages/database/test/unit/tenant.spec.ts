@@ -1,10 +1,10 @@
+import { randomUUIDv7 } from 'node:crypto';
 import { sql } from 'kysely';
 import type { TenantTransaction } from '../../src/index.js';
 import { unwrapTenantTransaction, withTenant } from '../../src/storage.js';
 import { createRecordingDb } from '../support/recording-db.js';
-import { uuidv7 } from '../support/uuidv7.js';
 
-const ORG_ID = uuidv7();
+const ORG_ID = randomUUIDv7();
 
 describe('unwrapTenantTransaction', () => {
   it('returns the very same object (the opaque type only exists at compile time)', () => {
