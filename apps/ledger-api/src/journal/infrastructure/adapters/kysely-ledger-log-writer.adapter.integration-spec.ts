@@ -6,8 +6,8 @@ import {
   type LedgerDatabase,
 } from '@ledger/database/storage';
 import type { TenantTransaction } from '@ledger/database';
-import { Uuidv7IdGenerator } from '../../ids/infrastructure/uuidv7-id-generator.js';
-import { KyselyLedgerLogWriter } from './kysely-ledger-log-writer.js';
+import { Uuidv7IdGenerator } from '../../../ids/infrastructure/adapters/uuidv7-id-generator.adapter.js';
+import { KyselyLedgerLogWriter } from './kysely-ledger-log-writer.adapter.js';
 
 // The writer has no constructor arguments, so these tests do not need Nest.
 // Every test uses a new organization id, so tests never see each other's rows.

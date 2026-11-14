@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ID_GENERATOR } from './application/ports/id-generator.port.js';
-import { Uuidv7IdGenerator } from './infrastructure/uuidv7-id-generator.js';
+import { Uuidv7IdGenerator } from './infrastructure/adapters/uuidv7-id-generator.adapter.js';
 
 /**
  * Makes ids for new rows. A feature imports this module and injects

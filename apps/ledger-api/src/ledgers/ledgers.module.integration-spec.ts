@@ -12,7 +12,7 @@ import { ListLedgersUseCase } from './application/use-cases/list-ledgers.use-cas
 import { SaveLedgerMetadataUseCase } from './application/use-cases/save-ledger-metadata.use-case.js';
 import { LedgerAlreadyExistsError } from './domain/ledger-already-exists.error.js';
 import { LedgerNotFoundError } from './domain/ledger-not-found.error.js';
-import { Uuidv7IdGenerator } from '../ids/infrastructure/uuidv7-id-generator.js';
+import { Uuidv7IdGenerator } from '../ids/infrastructure/adapters/uuidv7-id-generator.adapter.js';
 import { LedgersModule } from './ledgers.module.js';
 
 // Every test uses new organization ids, so tests never see each other's rows

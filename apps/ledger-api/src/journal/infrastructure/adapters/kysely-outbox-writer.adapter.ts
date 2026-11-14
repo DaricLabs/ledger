@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { sql, unwrapTenantTransaction } from '@ledger/database/storage';
 import type { TenantTransaction } from '@ledger/database';
-import type { IOutboxEvent, IOutboxWriter } from '../application/ports/outbox-writer.port.js';
+import type { IOutboxEvent, IOutboxWriter } from '../../application/ports/outbox-writer.port.js';
 
 @Injectable()
 export class KyselyOutboxWriter implements IOutboxWriter {
