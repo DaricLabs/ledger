@@ -6,8 +6,8 @@ import {
   type LedgerDatabase,
 } from '@ledger/database/storage';
 import type { TenantTransaction } from '@ledger/database';
-import { Uuidv7IdGenerator } from '../../ids/infrastructure/adapters/uuidv7-id-generator.adapter.js';
-import { AccountBalance } from '../domain/account-balance.js';
+import { Uuidv7IdGenerator } from '../../../ids/infrastructure/adapters/uuidv7-id-generator.adapter.js';
+import { AccountBalance } from '../../domain/entities/account-balance.entity.js';
 import { KyselyAccountBalanceRepository } from './kysely-account-balance.repository.js';
 import { KyselyAccountRepository } from './kysely-account.repository.js';
 

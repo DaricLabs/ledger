@@ -1,5 +1,5 @@
 import type { TenantTransaction } from '@ledger/database';
-import type { AccountBalance, IBalanceKey } from '../../domain/account-balance.js';
+import type { AccountBalance, IBalanceKey } from '../../domain/entities/account-balance.entity.js';
 
 /**
  * The write side of accounts and balances, for the features that move money.

@@ -7,8 +7,11 @@ import type { ITenantTransactionRunner } from '../../../journal/application/port
 import type { ILedgerRepository } from '../../../ledgers/application/ports/ledger-repository.port.js';
 import { LedgerNotFoundError } from '../../../ledgers/domain/errors/ledger-not-found.error.js';
 import { Ledger } from '../../../ledgers/domain/entities/ledger.entity.js';
-import { AccountBalance, balanceKeyText } from '../../../accounts/domain/account-balance.js';
-import { InsufficientFundsError } from '../../../accounts/domain/insufficient-funds.error.js';
+import {
+  AccountBalance,
+  balanceKeyText,
+} from '../../../accounts/domain/entities/account-balance.entity.js';
+import { InsufficientFundsError } from '../../../accounts/domain/errors/insufficient-funds.error.js';
 import { InvalidPostingError } from '../../domain/invalid-posting.error.js';
 import { InvalidTransactionError } from '../../domain/invalid-transaction.error.js';
 import { TransactionReferenceAlreadyExistsError } from '../../domain/transaction-reference-already-exists.error.js';

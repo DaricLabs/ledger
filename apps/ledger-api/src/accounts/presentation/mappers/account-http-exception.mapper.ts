@@ -1,7 +1,7 @@
 import { HttpException, HttpStatus } from '@nestjs/common';
-import type { AccountDomainError } from '../domain/account-domain.error.js';
-import { AccountNotFoundError } from '../domain/account-not-found.error.js';
-import { InsufficientFundsError } from '../domain/insufficient-funds.error.js';
+import type { AccountDomainError } from '../../domain/errors/account-domain.error.js';
+import { AccountNotFoundError } from '../../domain/errors/account-not-found.error.js';
+import { InsufficientFundsError } from '../../domain/errors/insufficient-funds.error.js';
 
 /**
  * Maps a domain error of this feature to the HTTP exception that the global

@@ -2,8 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { AccountAddress, AssetCode, Money } from '@ledger/domain';
 import { sql, unwrapTenantTransaction } from '@ledger/database/storage';
 import type { TenantTransaction } from '@ledger/database';
-import type { IAccountBalanceRepository } from '../application/ports/account-balance-repository.port.js';
-import { AccountBalance, type IBalanceKey } from '../domain/account-balance.js';
+import type { IAccountBalanceRepository } from '../../application/ports/account-balance-repository.port.js';
+import { AccountBalance, type IBalanceKey } from '../../domain/entities/account-balance.entity.js';
 
 /** A row of the lock query, as `pg` returns it. */
 interface IBalanceRow {

@@ -1,10 +1,10 @@
 import { AccountAddress, AssetCode, Money } from '@ledger/domain';
-import { Account, type AccountProps } from './account.entity.js';
+import { Account, type IAccountProps } from './account.entity.js';
 
 const usd = AssetCode.of('USD');
 const eur = AssetCode.of('EUR');
 
-const props = (): AccountProps => ({
+const props = (): IAccountProps => ({
   address: AccountAddress.of('users:1'),
   allowOverdraft: false,
   createdAt: new Date('2026-11-09T10:00:00.000Z'),

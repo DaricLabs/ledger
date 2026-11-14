@@ -21,7 +21,7 @@ import {
   type ILedgerRepository,
 } from '../../../ledgers/application/ports/ledger-repository.port.js';
 import { LedgerNotFoundError } from '../../../ledgers/domain/errors/ledger-not-found.error.js';
-import { AccountBalance } from '../../../accounts/domain/account-balance.js';
+import { AccountBalance } from '../../../accounts/domain/entities/account-balance.entity.js';
 import { Posting } from '../../domain/posting.js';
 import { TRANSACTION_LOG_TYPE } from '../../domain/transaction-log-type.js';
 import { Transaction } from '../../domain/transaction.entity.js';

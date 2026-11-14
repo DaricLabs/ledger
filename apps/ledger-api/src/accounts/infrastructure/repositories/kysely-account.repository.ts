@@ -6,8 +6,8 @@ import type {
   IAccountPage,
   IAccountPageQuery,
   IAccountRepository,
-} from '../application/ports/account-repository.port.js';
-import { Account } from '../domain/account.entity.js';
+} from '../../application/ports/account-repository.port.js';
+import { Account } from '../../domain/entities/account.entity.js';
 
 /** A row of the account queries, as `pg` returns it. */
 interface IAccountRow {

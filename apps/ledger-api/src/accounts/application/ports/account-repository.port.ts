@@ -1,6 +1,6 @@
 import type { TenantTransaction } from '@ledger/database';
 import type { AccountAddress } from '@ledger/domain';
-import type { Account } from '../../domain/account.entity.js';
+import type { Account } from '../../domain/entities/account.entity.js';
 
 /** Which page of accounts to load. */
 export interface IAccountPageQuery {

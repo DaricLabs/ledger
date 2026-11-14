@@ -10,7 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { Response } from 'express';
-import { AccountExceptionFilter } from '../../accounts/presentation/account-exception.filter.js';
+import { AccountExceptionFilter } from '../../accounts/presentation/filters/account-exception.filter.js';
 import { OrganizationId } from '../../core/tenant/organization-id.decorator.js';
 import { TenantGuard } from '../../core/tenant/tenant.guard.js';
 import { LedgerExceptionFilter } from '../../ledgers/presentation/filters/ledger-exception.filter.js';
