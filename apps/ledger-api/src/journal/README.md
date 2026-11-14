@@ -17,6 +17,6 @@ feature: it has no HTTP routes and no domain rules.
    an event means. `type`, `eventType` and the payloads are plain data that the
    feature owns. Each feature keeps its own list of log types.
 3. **Same layers as a feature:** ports in `application/ports/`, Kysely adapters
-   in `infrastructure/`. The application layer does not import `core/`.
+   in `infrastructure/adapters/`. The application layer does not import `core/`.
 4. **Only write-path code goes here.** A reader that lists logs or events, or a
    worker that publishes them, is a feature or another app.

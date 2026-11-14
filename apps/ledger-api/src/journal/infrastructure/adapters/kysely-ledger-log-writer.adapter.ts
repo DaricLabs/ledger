@@ -4,7 +4,7 @@ import type { TenantTransaction } from '@ledger/database';
 import type {
   ILedgerLogEntry,
   ILedgerLogWriter,
-} from '../application/ports/ledger-log-writer.port.js';
+} from '../../application/ports/ledger-log-writer.port.js';
 
 @Injectable()
 export class KyselyLedgerLogWriter implements ILedgerLogWriter {

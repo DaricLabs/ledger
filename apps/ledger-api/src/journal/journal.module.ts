@@ -3,9 +3,9 @@ import { DatabaseModule } from '../core/database/database.module.js';
 import { LEDGER_LOG_WRITER } from './application/ports/ledger-log-writer.port.js';
 import { OUTBOX_WRITER } from './application/ports/outbox-writer.port.js';
 import { TENANT_TRANSACTION_RUNNER } from './application/ports/tenant-transaction-runner.port.js';
-import { KyselyLedgerLogWriter } from './infrastructure/kysely-ledger-log-writer.js';
-import { KyselyOutboxWriter } from './infrastructure/kysely-outbox-writer.js';
-import { KyselyTenantTransactionRunner } from './infrastructure/kysely-tenant-transaction-runner.js';
+import { KyselyLedgerLogWriter } from './infrastructure/adapters/kysely-ledger-log-writer.adapter.js';
+import { KyselyOutboxWriter } from './infrastructure/adapters/kysely-outbox-writer.adapter.js';
+import { KyselyTenantTransactionRunner } from './infrastructure/adapters/kysely-tenant-transaction-runner.adapter.js';
 
 /**
  * The write path every feature that changes ledger state shares: one tenant
