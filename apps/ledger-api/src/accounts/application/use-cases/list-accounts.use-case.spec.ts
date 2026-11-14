@@ -4,7 +4,7 @@ import type { ITenantTransactionRunner } from '../../../journal/application/port
 import type { ILedgerRepository } from '../../../ledgers/application/ports/ledger-repository.port.js';
 import { LedgerNotFoundError } from '../../../ledgers/domain/errors/ledger-not-found.error.js';
 import { Ledger } from '../../../ledgers/domain/entities/ledger.entity.js';
-import { Account } from '../../domain/account.entity.js';
+import { Account } from '../../domain/entities/account.entity.js';
 import type { IAccountPage, IAccountRepository } from '../ports/account-repository.port.js';
 import { ListAccountsUseCase } from './list-accounts.use-case.js';
 

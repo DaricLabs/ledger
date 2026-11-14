@@ -1,7 +1,7 @@
 import type { AccountAddress, Money } from '@ledger/domain';
 
 /** The data an account is made of. */
-export interface AccountProps {
+export interface IAccountProps {
   address: AccountAddress;
   /** `true` when the account may go below zero. */
   allowOverdraft: boolean;
@@ -30,10 +30,10 @@ export interface AccountProps {
  * Make one with `Account.reconstitute`.
  */
 export class Account {
-  private constructor(private readonly props: Readonly<AccountProps>) {}
+  private constructor(private readonly props: Readonly<IAccountProps>) {}
 
   /** Rebuilds an account that was read from storage. It trusts the data. */
-  static reconstitute(props: AccountProps): Account {
+  static reconstitute(props: IAccountProps): Account {
     return new Account(
       Object.freeze({
         address: props.address,

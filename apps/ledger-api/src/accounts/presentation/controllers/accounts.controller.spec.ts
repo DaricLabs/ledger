@@ -5,16 +5,16 @@ import { AccountAddress, AssetCode, Money } from '@ledger/domain';
 import { LoggerModule } from 'nestjs-pino';
 import request from 'supertest';
 import type { App } from 'supertest/types.js';
-import { ErrorsModule } from '../../core/errors/errors.module.js';
-import { ORGANIZATION_ID_HEADER } from '../../core/tenant/tenant.guard.js';
-import { ValidationModule } from '../../core/validation/validation.module.js';
-import { LedgerNotFoundError } from '../../ledgers/domain/errors/ledger-not-found.error.js';
-import { GetAccountUseCase } from '../application/use-cases/get-account.use-case.js';
-import { ListAccountsUseCase } from '../application/use-cases/list-accounts.use-case.js';
-import { AccountDomainError } from '../domain/account-domain.error.js';
-import { AccountNotFoundError } from '../domain/account-not-found.error.js';
-import { Account } from '../domain/account.entity.js';
-import { encodeAccountCursor } from './dto/account-page-cursor.dto.js';
+import { ErrorsModule } from '../../../core/errors/errors.module.js';
+import { ORGANIZATION_ID_HEADER } from '../../../core/tenant/tenant.guard.js';
+import { ValidationModule } from '../../../core/validation/validation.module.js';
+import { LedgerNotFoundError } from '../../../ledgers/domain/errors/ledger-not-found.error.js';
+import { GetAccountUseCase } from '../../application/use-cases/get-account.use-case.js';
+import { ListAccountsUseCase } from '../../application/use-cases/list-accounts.use-case.js';
+import { AccountDomainError } from '../../domain/errors/account-domain.error.js';
+import { AccountNotFoundError } from '../../domain/errors/account-not-found.error.js';
+import { Account } from '../../domain/entities/account.entity.js';
+import { encodeAccountCursor } from '../dto/account-page-cursor.dto.js';
 import { AccountsController } from './accounts.controller.js';
 
 // These tests start a real Nest app with the real guard, validation pipe and

@@ -1,10 +1,10 @@
 import type { Money } from '@ledger/domain';
 import type { IAccountPage } from '../../application/ports/account-repository.port.js';
-import type { Account } from '../../domain/account.entity.js';
+import type { Account } from '../../domain/entities/account.entity.js';
 import { encodeAccountCursor } from './account-page-cursor.dto.js';
 
 /** What an account holds in one asset. Field names are part of the public API. */
-export interface BalanceResponseDto {
+export interface IBalanceResponse {
   asset: string;
   /**
    * A string of digits in the smallest unit of the asset, like `"1050"`, with
@@ -19,21 +19,21 @@ export interface BalanceResponseDto {
  * `organizationId` and `ledgerId` are not included: the caller already knows
  * them from the header and the URL.
  */
-export interface AccountResponseDto {
+export interface IAccountResponse {
   address: string;
   /** `true` when the account may go below zero. */
   allowOverdraft: boolean;
   /** One entry for each asset the account has held, in the order of the asset codes. */
-  balances: BalanceResponseDto[];
+  balances: IBalanceResponse[];
   /** When the ledger first saw the account. ISO 8601 date in UTC, like `2026-11-09T10:00:00.000Z`. */
   createdAt: string;
 }
 
-function toBalanceResponseDto(balance: Money): BalanceResponseDto {
+function toBalanceResponseDto(balance: Money): IBalanceResponse {
   return { asset: balance.asset.value, amount: balance.amount.toString() };
 }
 
-export function toAccountResponseDto(account: Account): AccountResponseDto {
+export function toAccountResponseDto(account: Account): IAccountResponse {
   return {
     address: account.address.value,
     allowOverdraft: account.allowOverdraft,
@@ -43,16 +43,16 @@ export function toAccountResponseDto(account: Account): AccountResponseDto {
 }
 
 /** One page of `GET /ledgers/:ledgerName/accounts`. Field names are part of the public API. */
-export interface AccountPageResponseDto {
+export interface IAccountPageResponse {
   /** The accounts of this page, sorted by address. */
-  data: AccountResponseDto[];
+  data: IAccountResponse[];
   /** `true` when there is a next page. */
   hasMore: boolean;
   /** The `cursor` that gets the next page. It is there only when `hasMore` is `true`. */
   next?: string;
 }
 
-export function toAccountPageResponseDto(page: IAccountPage): AccountPageResponseDto {
+export function toAccountPageResponseDto(page: IAccountPage): IAccountPageResponse {
   const last = page.accounts.at(-1);
   return {
     data: page.accounts.map(toAccountResponseDto),

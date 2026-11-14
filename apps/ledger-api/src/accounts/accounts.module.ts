@@ -5,9 +5,9 @@ import { ACCOUNT_BALANCE_REPOSITORY } from './application/ports/account-balance-
 import { ACCOUNT_REPOSITORY } from './application/ports/account-repository.port.js';
 import { GetAccountUseCase } from './application/use-cases/get-account.use-case.js';
 import { ListAccountsUseCase } from './application/use-cases/list-accounts.use-case.js';
-import { KyselyAccountBalanceRepository } from './infrastructure/kysely-account-balance.repository.js';
-import { KyselyAccountRepository } from './infrastructure/kysely-account.repository.js';
-import { AccountsController } from './presentation/accounts.controller.js';
+import { KyselyAccountBalanceRepository } from './infrastructure/repositories/kysely-account-balance.repository.js';
+import { KyselyAccountRepository } from './infrastructure/repositories/kysely-account.repository.js';
+import { AccountsController } from './presentation/controllers/accounts.controller.js';
 
 /**
  * Accounts and their balances.

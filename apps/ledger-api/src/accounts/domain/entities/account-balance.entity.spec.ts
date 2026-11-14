@@ -4,8 +4,8 @@ import {
   balanceKeyText,
   compareBalanceKeys,
   type IBalanceKey,
-} from './account-balance.js';
-import { InsufficientFundsError } from './insufficient-funds.error.js';
+} from './account-balance.entity.js';
+import { InsufficientFundsError } from '../errors/insufficient-funds.error.js';
 
 const usd = AssetCode.of('USD');
 const eur = AssetCode.of('EUR');

@@ -1,22 +1,22 @@
 import { Controller, Get, Param, Query, UseFilters, UseGuards } from '@nestjs/common';
-import { OrganizationId } from '../../core/tenant/organization-id.decorator.js';
-import { TenantGuard } from '../../core/tenant/tenant.guard.js';
-import { ledgerNameSchema } from '../../ledgers/presentation/dto/ledger-name.dto.js';
-import { LedgerExceptionFilter } from '../../ledgers/presentation/filters/ledger-exception.filter.js';
-import { GetAccountUseCase } from '../application/use-cases/get-account.use-case.js';
-import { ListAccountsUseCase } from '../application/use-cases/list-accounts.use-case.js';
-import { AccountExceptionFilter } from './account-exception.filter.js';
-import { accountAddressSchema } from './dto/account-address.dto.js';
+import { OrganizationId } from '../../../core/tenant/organization-id.decorator.js';
+import { TenantGuard } from '../../../core/tenant/tenant.guard.js';
+import { ledgerNameSchema } from '../../../ledgers/presentation/dto/ledger-name.dto.js';
+import { LedgerExceptionFilter } from '../../../ledgers/presentation/filters/ledger-exception.filter.js';
+import { GetAccountUseCase } from '../../application/use-cases/get-account.use-case.js';
+import { ListAccountsUseCase } from '../../application/use-cases/list-accounts.use-case.js';
+import { AccountExceptionFilter } from '../filters/account-exception.filter.js';
+import { accountAddressSchema } from '../dto/account-address.dto.js';
 import {
   listAccountsQuerySchema,
   type ListAccountsQueryDto,
-} from './dto/list-accounts-query.dto.js';
+} from '../dto/list-accounts-query.dto.js';
 import {
   toAccountPageResponseDto,
   toAccountResponseDto,
-  type AccountPageResponseDto,
-  type AccountResponseDto,
-} from './dto/account-response.dto.js';
+  type IAccountPageResponse,
+  type IAccountResponse,
+} from '../dto/account-response.dto.js';
 
 const LEDGERS_PATH = 'ledgers';
 const ACCOUNTS_PATH = 'accounts';
@@ -63,7 +63,7 @@ export class AccountsController {
     @OrganizationId() organizationId: string,
     @Param('ledgerName', { schema: ledgerNameSchema }) ledgerName: string,
     @Query({ schema: listAccountsQuerySchema }) query: ListAccountsQueryDto,
-  ): Promise<AccountPageResponseDto> {
+  ): Promise<IAccountPageResponse> {
     const page = await this.listAccounts.execute({
       organizationId,
       ledgerName,
@@ -91,7 +91,7 @@ export class AccountsController {
     @OrganizationId() organizationId: string,
     @Param('ledgerName', { schema: ledgerNameSchema }) ledgerName: string,
     @Param('address', { schema: accountAddressSchema }) address: string,
-  ): Promise<AccountResponseDto> {
+  ): Promise<IAccountResponse> {
     const account = await this.getAccount.execute({ organizationId, ledgerName, address });
     return toAccountResponseDto(account);
   }

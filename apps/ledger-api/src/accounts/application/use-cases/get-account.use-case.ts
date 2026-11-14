@@ -9,8 +9,8 @@ import {
   type ILedgerRepository,
 } from '../../../ledgers/application/ports/ledger-repository.port.js';
 import { LedgerNotFoundError } from '../../../ledgers/domain/errors/ledger-not-found.error.js';
-import { AccountNotFoundError } from '../../domain/account-not-found.error.js';
-import type { Account } from '../../domain/account.entity.js';
+import { AccountNotFoundError } from '../../domain/errors/account-not-found.error.js';
+import type { Account } from '../../domain/entities/account.entity.js';
 import { ACCOUNT_REPOSITORY, type IAccountRepository } from '../ports/account-repository.port.js';
 
 export interface IGetAccountInput {

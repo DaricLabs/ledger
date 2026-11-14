@@ -1,5 +1,5 @@
 import { Money, type AccountAddress, type AssetCode } from '@ledger/domain';
-import { InsufficientFundsError } from './insufficient-funds.error.js';
+import { InsufficientFundsError } from '../errors/insufficient-funds.error.js';
 
 /** Which balance: the money of one asset on one account. */
 export interface IBalanceKey {
@@ -37,7 +37,7 @@ export function compareBalanceKeys(left: IBalanceKey, right: IBalanceKey): numbe
 }
 
 /** The data an `AccountBalance` is made of. */
-interface AccountBalanceProps {
+interface IAccountBalanceProps {
   address: AccountAddress;
   balance: Money;
   allowOverdraft: boolean;
@@ -57,7 +57,7 @@ interface AccountBalanceProps {
  * `AccountBalance.reconstitute` (a balance loaded from storage).
  */
 export class AccountBalance {
-  private constructor(private readonly props: Readonly<AccountBalanceProps>) {}
+  private constructor(private readonly props: Readonly<IAccountBalanceProps>) {}
 
   /**
    * The balance of an account that has never held this asset: zero. The
@@ -73,7 +73,7 @@ export class AccountBalance {
   }
 
   /** Rebuilds a balance that was already saved. It trusts storage. */
-  static reconstitute(props: AccountBalanceProps): AccountBalance {
+  static reconstitute(props: IAccountBalanceProps): AccountBalance {
     return new AccountBalance({ ...props });
   }
 
