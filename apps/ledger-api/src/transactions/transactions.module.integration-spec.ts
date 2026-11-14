@@ -6,7 +6,7 @@ import { unwrapTenantTransaction, withTenant, type LedgerDatabase } from '@ledge
 import { KYSELY_DB } from '../core/database/database.constant.js';
 import { Uuidv7IdGenerator } from '../ids/infrastructure/adapters/uuidv7-id-generator.adapter.js';
 import { CreateLedgerUseCase } from '../ledgers/application/use-cases/create-ledger.use-case.js';
-import { LedgerNotFoundError } from '../ledgers/domain/ledger-not-found.error.js';
+import { LedgerNotFoundError } from '../ledgers/domain/errors/ledger-not-found.error.js';
 import {
   CreateTransactionUseCase,
   type ICreateTransactionInput,

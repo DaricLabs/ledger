@@ -1,10 +1,10 @@
 import { HttpException, HttpStatus } from '@nestjs/common';
-import { InvalidLedgerMetadataError } from '../domain/invalid-ledger-metadata.error.js';
-import { InvalidLedgerNameError } from '../domain/invalid-ledger-name.error.js';
-import { LedgerAlreadyExistsError } from '../domain/ledger-already-exists.error.js';
-import type { LedgerDomainError } from '../domain/ledger-domain.error.js';
-import { LedgerMetadataLimitExceededError } from '../domain/ledger-metadata-limit-exceeded.error.js';
-import { LedgerNotFoundError } from '../domain/ledger-not-found.error.js';
+import { InvalidLedgerMetadataError } from '../../domain/errors/invalid-ledger-metadata.error.js';
+import { InvalidLedgerNameError } from '../../domain/errors/invalid-ledger-name.error.js';
+import { LedgerAlreadyExistsError } from '../../domain/errors/ledger-already-exists.error.js';
+import type { LedgerDomainError } from '../../domain/errors/ledger-domain.error.js';
+import { LedgerMetadataLimitExceededError } from '../../domain/errors/ledger-metadata-limit-exceeded.error.js';
+import { LedgerNotFoundError } from '../../domain/errors/ledger-not-found.error.js';
 
 /**
  * Maps a ledger domain error to the HTTP exception that the global error

@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { LedgerNotFoundError } from '../../domain/ledger-not-found.error.js';
-import type { Ledger } from '../../domain/ledger.entity.js';
+import { LedgerNotFoundError } from '../../domain/errors/ledger-not-found.error.js';
+import type { Ledger } from '../../domain/entities/ledger.entity.js';
 import { LEDGER_REPOSITORY, type ILedgerRepository } from '../ports/ledger-repository.port.js';
 import {
   TENANT_TRANSACTION_RUNNER,

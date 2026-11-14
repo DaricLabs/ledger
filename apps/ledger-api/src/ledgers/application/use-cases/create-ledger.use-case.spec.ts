@@ -3,8 +3,8 @@ import type { ILedgerRepository } from '../ports/ledger-repository.port.js';
 import type { ILedgerLogWriter } from '../../../journal/application/ports/ledger-log-writer.port.js';
 import type { IOutboxWriter } from '../../../journal/application/ports/outbox-writer.port.js';
 import type { ITenantTransactionRunner } from '../../../journal/application/ports/tenant-transaction-runner.port.js';
-import { InvalidLedgerNameError } from '../../domain/invalid-ledger-name.error.js';
-import { LedgerMetadataLimitExceededError } from '../../domain/ledger-metadata-limit-exceeded.error.js';
+import { InvalidLedgerNameError } from '../../domain/errors/invalid-ledger-name.error.js';
+import { LedgerMetadataLimitExceededError } from '../../domain/errors/ledger-metadata-limit-exceeded.error.js';
 import { CreateLedgerUseCase } from './create-ledger.use-case.js';
 
 const ORG_ID = '0190a5d4-7b3c-7abc-8def-0123456789ab';

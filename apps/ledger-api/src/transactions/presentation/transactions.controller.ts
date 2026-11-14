@@ -13,7 +13,7 @@ import type { Response } from 'express';
 import { AccountExceptionFilter } from '../../accounts/presentation/account-exception.filter.js';
 import { OrganizationId } from '../../core/tenant/organization-id.decorator.js';
 import { TenantGuard } from '../../core/tenant/tenant.guard.js';
-import { LedgerExceptionFilter } from '../../ledgers/presentation/ledger-exception.filter.js';
+import { LedgerExceptionFilter } from '../../ledgers/presentation/filters/ledger-exception.filter.js';
 import { ledgerNameSchema } from '../../ledgers/presentation/dto/ledger-name.dto.js';
 import { CreateTransactionUseCase } from '../application/use-cases/create-transaction.use-case.js';
 import { GetTransactionUseCase } from '../application/use-cases/get-transaction.use-case.js';

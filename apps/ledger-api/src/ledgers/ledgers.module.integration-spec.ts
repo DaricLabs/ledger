@@ -10,8 +10,8 @@ import { DeleteLedgerMetadataUseCase } from './application/use-cases/delete-ledg
 import { GetLedgerUseCase } from './application/use-cases/get-ledger.use-case.js';
 import { ListLedgersUseCase } from './application/use-cases/list-ledgers.use-case.js';
 import { SaveLedgerMetadataUseCase } from './application/use-cases/save-ledger-metadata.use-case.js';
-import { LedgerAlreadyExistsError } from './domain/ledger-already-exists.error.js';
-import { LedgerNotFoundError } from './domain/ledger-not-found.error.js';
+import { LedgerAlreadyExistsError } from './domain/errors/ledger-already-exists.error.js';
+import { LedgerNotFoundError } from './domain/errors/ledger-not-found.error.js';
 import { Uuidv7IdGenerator } from '../ids/infrastructure/adapters/uuidv7-id-generator.adapter.js';
 import { LedgersModule } from './ledgers.module.js';
 

@@ -5,9 +5,9 @@ import type {
   ILedgerPage,
   ILedgerPageQuery,
   ILedgerRepository,
-} from '../application/ports/ledger-repository.port.js';
-import { LedgerAlreadyExistsError } from '../domain/ledger-already-exists.error.js';
-import { Ledger, type LedgerMetadata } from '../domain/ledger.entity.js';
+} from '../../application/ports/ledger-repository.port.js';
+import { LedgerAlreadyExistsError } from '../../domain/errors/ledger-already-exists.error.js';
+import { Ledger, type LedgerMetadata } from '../../domain/entities/ledger.entity.js';
 
 /** Postgres name of `unique (organization_id, name)` on `ledgers`. */
 const NAME_UNIQUE_CONSTRAINT = 'ledgers_organization_id_name_key';

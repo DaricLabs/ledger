@@ -5,8 +5,8 @@ import type { ILedgerLogWriter } from '../../../journal/application/ports/ledger
 import type { IOutboxWriter } from '../../../journal/application/ports/outbox-writer.port.js';
 import type { ITenantTransactionRunner } from '../../../journal/application/ports/tenant-transaction-runner.port.js';
 import type { ILedgerRepository } from '../../../ledgers/application/ports/ledger-repository.port.js';
-import { LedgerNotFoundError } from '../../../ledgers/domain/ledger-not-found.error.js';
-import { Ledger } from '../../../ledgers/domain/ledger.entity.js';
+import { LedgerNotFoundError } from '../../../ledgers/domain/errors/ledger-not-found.error.js';
+import { Ledger } from '../../../ledgers/domain/entities/ledger.entity.js';
 import { AccountBalance, balanceKeyText } from '../../../accounts/domain/account-balance.js';
 import { InsufficientFundsError } from '../../../accounts/domain/insufficient-funds.error.js';
 import { InvalidPostingError } from '../../domain/invalid-posting.error.js';

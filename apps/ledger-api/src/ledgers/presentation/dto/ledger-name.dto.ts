@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { LEDGER_NAME_PATTERN } from '../../domain/ledger-name.js';
+import { LEDGER_NAME_PATTERN } from '../../domain/constants/ledger-name.constant.js';
 
 /**
  * Shape of a ledger name at the HTTP edge: the `name` field of the create body

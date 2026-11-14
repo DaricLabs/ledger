@@ -1,12 +1,12 @@
 import type { ILedgerPage } from '../../application/ports/ledger-repository.port.js';
-import type { Ledger, LedgerMetadata } from '../../domain/ledger.entity.js';
+import type { Ledger, LedgerMetadata } from '../../domain/entities/ledger.entity.js';
 import { encodeLedgerCursor } from './ledger-page-cursor.dto.js';
 
 /**
  * A ledger as clients see it. Field names are part of the public API.
  * `organizationId` is not included: the caller already sent it in the header.
  */
-export interface LedgerResponseDto {
+export interface ILedgerResponse {
   id: string;
   name: string;
   metadata: LedgerMetadata;
@@ -14,7 +14,7 @@ export interface LedgerResponseDto {
   createdAt: string;
 }
 
-export function toLedgerResponseDto(ledger: Ledger): LedgerResponseDto {
+export function toLedgerResponseDto(ledger: Ledger): ILedgerResponse {
   return {
     id: ledger.id,
     name: ledger.name,
@@ -24,16 +24,16 @@ export function toLedgerResponseDto(ledger: Ledger): LedgerResponseDto {
 }
 
 /** One page of `GET /ledgers`. Field names are part of the public API. */
-export interface LedgerPageResponseDto {
+export interface ILedgerPageResponse {
   /** The ledgers of this page, sorted by name. */
-  data: LedgerResponseDto[];
+  data: ILedgerResponse[];
   /** `true` when there is a next page. */
   hasMore: boolean;
   /** The `cursor` that gets the next page. It is there only when `hasMore` is `true`. */
   next?: string;
 }
 
-export function toLedgerPageResponseDto(page: ILedgerPage): LedgerPageResponseDto {
+export function toLedgerPageResponseDto(page: ILedgerPage): ILedgerPageResponse {
   const last = page.ledgers.at(-1);
   return {
     data: page.ledgers.map(toLedgerResponseDto),
