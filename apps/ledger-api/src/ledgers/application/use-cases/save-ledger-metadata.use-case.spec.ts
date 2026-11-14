@@ -1,8 +1,8 @@
 import type { TenantTransaction } from '@ledger/database';
-import { InvalidLedgerMetadataError } from '../../domain/invalid-ledger-metadata.error.js';
-import { LedgerMetadataLimitExceededError } from '../../domain/ledger-metadata-limit-exceeded.error.js';
-import { LedgerNotFoundError } from '../../domain/ledger-not-found.error.js';
-import { Ledger } from '../../domain/ledger.entity.js';
+import { InvalidLedgerMetadataError } from '../../domain/errors/invalid-ledger-metadata.error.js';
+import { LedgerMetadataLimitExceededError } from '../../domain/errors/ledger-metadata-limit-exceeded.error.js';
+import { LedgerNotFoundError } from '../../domain/errors/ledger-not-found.error.js';
+import { Ledger } from '../../domain/entities/ledger.entity.js';
 import type { ILedgerLogWriter } from '../../../journal/application/ports/ledger-log-writer.port.js';
 import type { ILedgerRepository } from '../ports/ledger-repository.port.js';
 import type { IOutboxWriter } from '../../../journal/application/ports/outbox-writer.port.js';

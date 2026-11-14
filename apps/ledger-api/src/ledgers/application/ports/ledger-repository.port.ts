@@ -1,5 +1,5 @@
 import type { TenantTransaction } from '@ledger/database';
-import type { Ledger } from '../../domain/ledger.entity.js';
+import type { Ledger } from '../../domain/entities/ledger.entity.js';
 
 /** Which page of ledgers to load. */
 export interface ILedgerPageQuery {

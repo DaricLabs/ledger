@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { LEDGER_LOG_TYPE } from '../../domain/ledger-log-type.js';
-import { Ledger } from '../../domain/ledger.entity.js';
+import { LEDGER_LOG_TYPE } from '../../domain/constants/ledger-log-type.constant.js';
+import { Ledger } from '../../domain/entities/ledger.entity.js';
 import {
   ID_GENERATOR,
   type IIdGenerator,

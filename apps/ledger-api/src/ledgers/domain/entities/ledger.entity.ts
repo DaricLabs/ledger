@@ -1,7 +1,7 @@
-import { InvalidLedgerMetadataError } from './invalid-ledger-metadata.error.js';
-import { InvalidLedgerNameError } from './invalid-ledger-name.error.js';
-import { LedgerMetadataLimitExceededError } from './ledger-metadata-limit-exceeded.error.js';
-import { LEDGER_NAME_PATTERN, RESERVED_LEDGER_NAMES } from './ledger-name.js';
+import { InvalidLedgerMetadataError } from '../errors/invalid-ledger-metadata.error.js';
+import { InvalidLedgerNameError } from '../errors/invalid-ledger-name.error.js';
+import { LedgerMetadataLimitExceededError } from '../errors/ledger-metadata-limit-exceeded.error.js';
+import { LEDGER_NAME_PATTERN, RESERVED_LEDGER_NAMES } from '../constants/ledger-name.constant.js';
 
 /** Free-form key/value pairs on a ledger. Every value is a string. */
 export type LedgerMetadata = Readonly<Record<string, string>>;
@@ -34,7 +34,7 @@ export const LEDGER_METADATA_LIMITS = Object.freeze({
 });
 
 /** The data a ledger is made of. */
-export interface LedgerProps {
+export interface ILedgerProps {
   /** UUIDv7. Made by the caller (the use case), never by the database. */
   id: string;
   /** The owner organization. An opaque id from the Identity service. */
@@ -62,7 +62,7 @@ export interface LedgerProps {
  * `Ledger.reconstitute` (a ledger loaded from storage, rules are not checked).
  */
 export class Ledger {
-  private constructor(private readonly props: Readonly<LedgerProps>) {}
+  private constructor(private readonly props: Readonly<ILedgerProps>) {}
 
   /**
    * Makes a NEW ledger and checks the rules for it.
@@ -75,7 +75,7 @@ export class Ledger {
    * @throws {InvalidLedgerMetadataError} If metadata is not an object, has an empty key, or has a non-string value.
    * @throws {LedgerMetadataLimitExceededError} If metadata is bigger than `LEDGER_METADATA_LIMITS` allow.
    */
-  static create(props: LedgerProps): Ledger {
+  static create(props: ILedgerProps): Ledger {
     assertValidName(props.name);
     assertValidMetadata(props.metadata);
     assertMetadataWithinLimits(props.metadata, props.metadata);
@@ -89,7 +89,7 @@ export class Ledger {
    * This is on purpose: if a name is reserved or a limit gets smaller later,
    * ledgers that already exist must still load.
    */
-  static reconstitute(props: LedgerProps): Ledger {
+  static reconstitute(props: ILedgerProps): Ledger {
     return new Ledger(snapshot(props));
   }
 
@@ -167,7 +167,7 @@ export class Ledger {
 }
 
 /** Copies the input, so later changes by the caller cannot reach the ledger. */
-function snapshot(props: LedgerProps): Readonly<LedgerProps> {
+function snapshot(props: ILedgerProps): Readonly<ILedgerProps> {
   return Object.freeze({
     id: props.id,
     organizationId: props.organizationId,

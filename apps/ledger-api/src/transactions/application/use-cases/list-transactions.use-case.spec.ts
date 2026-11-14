@@ -2,8 +2,8 @@ import type { TenantTransaction } from '@ledger/database';
 import { AccountAddress, AssetCode, Money } from '@ledger/domain';
 import type { ITenantTransactionRunner } from '../../../journal/application/ports/tenant-transaction-runner.port.js';
 import type { ILedgerRepository } from '../../../ledgers/application/ports/ledger-repository.port.js';
-import { Ledger } from '../../../ledgers/domain/ledger.entity.js';
-import { LedgerNotFoundError } from '../../../ledgers/domain/ledger-not-found.error.js';
+import { Ledger } from '../../../ledgers/domain/entities/ledger.entity.js';
+import { LedgerNotFoundError } from '../../../ledgers/domain/errors/ledger-not-found.error.js';
 import { Posting } from '../../domain/posting.js';
 import { Transaction } from '../../domain/transaction.entity.js';
 import type {

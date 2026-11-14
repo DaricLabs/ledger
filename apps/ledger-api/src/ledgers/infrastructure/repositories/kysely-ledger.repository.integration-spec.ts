@@ -6,11 +6,14 @@ import {
   withTenant,
   type LedgerDatabase,
 } from '@ledger/database/storage';
-import type { ILedgerPage, ILedgerPageQuery } from '../application/ports/ledger-repository.port.js';
-import { LedgerAlreadyExistsError } from '../domain/ledger-already-exists.error.js';
-import { Ledger } from '../domain/ledger.entity.js';
+import type {
+  ILedgerPage,
+  ILedgerPageQuery,
+} from '../../application/ports/ledger-repository.port.js';
+import { LedgerAlreadyExistsError } from '../../domain/errors/ledger-already-exists.error.js';
+import { Ledger } from '../../domain/entities/ledger.entity.js';
 import { KyselyLedgerRepository } from './kysely-ledger.repository.js';
-import { Uuidv7IdGenerator } from '../../ids/infrastructure/adapters/uuidv7-id-generator.adapter.js';
+import { Uuidv7IdGenerator } from '../../../ids/infrastructure/adapters/uuidv7-id-generator.adapter.js';
 
 // The repository has no constructor arguments, so these tests do not need Nest.
 // Every test uses a new organization id, so tests never see each other's rows.

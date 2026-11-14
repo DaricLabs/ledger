@@ -1,5 +1,5 @@
 import type { TenantTransaction } from '@ledger/database';
-import { Ledger } from '../../domain/ledger.entity.js';
+import { Ledger } from '../../domain/entities/ledger.entity.js';
 import type { ILedgerPage, ILedgerRepository } from '../ports/ledger-repository.port.js';
 import type { ITenantTransactionRunner } from '../../../journal/application/ports/tenant-transaction-runner.port.js';
 import { ListLedgersUseCase } from './list-ledgers.use-case.js';

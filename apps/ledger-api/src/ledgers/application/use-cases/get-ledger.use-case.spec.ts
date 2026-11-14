@@ -1,6 +1,6 @@
 import type { TenantTransaction } from '@ledger/database';
-import { Ledger } from '../../domain/ledger.entity.js';
-import { LedgerNotFoundError } from '../../domain/ledger-not-found.error.js';
+import { Ledger } from '../../domain/entities/ledger.entity.js';
+import { LedgerNotFoundError } from '../../domain/errors/ledger-not-found.error.js';
 import type { ILedgerRepository } from '../ports/ledger-repository.port.js';
 import type { ITenantTransactionRunner } from '../../../journal/application/ports/tenant-transaction-runner.port.js';
 import { GetLedgerUseCase } from './get-ledger.use-case.js';
