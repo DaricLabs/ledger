@@ -8,7 +8,7 @@ import type { App } from 'supertest/types.js';
 import { ErrorsModule } from '../../core/errors/errors.module.js';
 import { ORGANIZATION_ID_HEADER } from '../../core/tenant/tenant.guard.js';
 import { ValidationModule } from '../../core/validation/validation.module.js';
-import { LedgerNotFoundError } from '../../ledgers/domain/ledger-not-found.error.js';
+import { LedgerNotFoundError } from '../../ledgers/domain/errors/ledger-not-found.error.js';
 import { CreateTransactionUseCase } from '../application/use-cases/create-transaction.use-case.js';
 import { GetTransactionUseCase } from '../application/use-cases/get-transaction.use-case.js';
 import { ListTransactionsUseCase } from '../application/use-cases/list-transactions.use-case.js';

@@ -7,8 +7,8 @@ import { DeleteLedgerMetadataUseCase } from './application/use-cases/delete-ledg
 import { GetLedgerUseCase } from './application/use-cases/get-ledger.use-case.js';
 import { ListLedgersUseCase } from './application/use-cases/list-ledgers.use-case.js';
 import { SaveLedgerMetadataUseCase } from './application/use-cases/save-ledger-metadata.use-case.js';
-import { KyselyLedgerRepository } from './infrastructure/kysely-ledger.repository.js';
-import { LedgersController } from './presentation/ledgers.controller.js';
+import { KyselyLedgerRepository } from './infrastructure/repositories/kysely-ledger.repository.js';
+import { LedgersController } from './presentation/controllers/ledgers.controller.js';
 
 @Module({
   imports: [IdsModule, JournalModule],

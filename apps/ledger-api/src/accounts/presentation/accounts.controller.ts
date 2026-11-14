@@ -2,7 +2,7 @@ import { Controller, Get, Param, Query, UseFilters, UseGuards } from '@nestjs/co
 import { OrganizationId } from '../../core/tenant/organization-id.decorator.js';
 import { TenantGuard } from '../../core/tenant/tenant.guard.js';
 import { ledgerNameSchema } from '../../ledgers/presentation/dto/ledger-name.dto.js';
-import { LedgerExceptionFilter } from '../../ledgers/presentation/ledger-exception.filter.js';
+import { LedgerExceptionFilter } from '../../ledgers/presentation/filters/ledger-exception.filter.js';
 import { GetAccountUseCase } from '../application/use-cases/get-account.use-case.js';
 import { ListAccountsUseCase } from '../application/use-cases/list-accounts.use-case.js';
 import { AccountExceptionFilter } from './account-exception.filter.js';

@@ -1,13 +1,13 @@
-import { InvalidLedgerMetadataError } from './invalid-ledger-metadata.error.js';
-import { InvalidLedgerNameError } from './invalid-ledger-name.error.js';
-import { RESERVED_LEDGER_NAMES } from './ledger-name.js';
-import { LedgerMetadataLimitExceededError } from './ledger-metadata-limit-exceeded.error.js';
-import { LEDGER_METADATA_LIMITS, Ledger, type LedgerProps } from './ledger.entity.js';
+import { InvalidLedgerMetadataError } from '../errors/invalid-ledger-metadata.error.js';
+import { InvalidLedgerNameError } from '../errors/invalid-ledger-name.error.js';
+import { RESERVED_LEDGER_NAMES } from '../constants/ledger-name.constant.js';
+import { LedgerMetadataLimitExceededError } from '../errors/ledger-metadata-limit-exceeded.error.js';
+import { LEDGER_METADATA_LIMITS, Ledger, type ILedgerProps } from './ledger.entity.js';
 
 const ORG_ID = '0190a5d4-7b3c-7abc-8def-0123456789ab';
 const LEDGER_ID = '0190a5d4-7b3c-7abc-8def-0123456789cd';
 
-function props(overrides: Partial<LedgerProps> = {}): LedgerProps {
+function props(overrides: Partial<ILedgerProps> = {}): ILedgerProps {
   return {
     id: LEDGER_ID,
     organizationId: ORG_ID,
@@ -112,7 +112,7 @@ describe('Ledger.create', () => {
     ['an object', { a: 'b' }],
     ['an array', ['x']],
   ])('rejects a metadata value that is %s', (_label, value) => {
-    const metadata = { bad: value } as unknown as LedgerProps['metadata'];
+    const metadata = { bad: value } as unknown as ILedgerProps['metadata'];
 
     expect(() => Ledger.create(props({ metadata }))).toThrow(
       new InvalidLedgerMetadataError('Metadata value for key "bad" must be a string'),
@@ -125,7 +125,7 @@ describe('Ledger.create', () => {
     ['a string', 'x'],
   ])('rejects metadata that is %s', (_label, metadata) => {
     expect(() =>
-      Ledger.create(props({ metadata: metadata as unknown as LedgerProps['metadata'] })),
+      Ledger.create(props({ metadata: metadata as unknown as ILedgerProps['metadata'] })),
     ).toThrow(InvalidLedgerMetadataError);
   });
 
@@ -136,7 +136,7 @@ describe('Ledger.create', () => {
   });
 
   it('never puts a metadata value in the error message', () => {
-    const metadata = { k: { password: 'hunter2' } } as unknown as LedgerProps['metadata'];
+    const metadata = { k: { password: 'hunter2' } } as unknown as ILedgerProps['metadata'];
 
     expect(() => Ledger.create(props({ metadata }))).toThrow(
       expect.objectContaining({ message: expect.not.stringContaining('hunter2') }),
@@ -355,7 +355,7 @@ describe('Ledger.withMetadata', () => {
     ['null', null],
     ['an object', { a: 'b' }],
   ])('rejects a value that is %s', (_label, value) => {
-    const changes = { bad: value } as unknown as LedgerProps['metadata'];
+    const changes = { bad: value } as unknown as ILedgerProps['metadata'];
 
     expect(() => ledger().withMetadata(changes)).toThrow(
       new InvalidLedgerMetadataError('Metadata value for key "bad" must be a string'),
@@ -373,7 +373,7 @@ describe('Ledger.withMetadata', () => {
     ['an array', []],
     ['a string', 'x'],
   ])('rejects changes that are %s', (_label, changes) => {
-    expect(() => ledger().withMetadata(changes as unknown as LedgerProps['metadata'])).toThrow(
+    expect(() => ledger().withMetadata(changes as unknown as ILedgerProps['metadata'])).toThrow(
       InvalidLedgerMetadataError,
     );
   });
@@ -382,13 +382,13 @@ describe('Ledger.withMetadata', () => {
     const before = ledger();
 
     expect(() =>
-      before.withMetadata({ ok: 'yes', bad: 1 } as unknown as LedgerProps['metadata']),
+      before.withMetadata({ ok: 'yes', bad: 1 } as unknown as ILedgerProps['metadata']),
     ).toThrow(InvalidLedgerMetadataError);
     expect(before.metadata).toEqual({ env: 'prod', team: 'payments' });
   });
 
   it('never puts a metadata value in the error message', () => {
-    const changes = { k: { password: 'hunter2' } } as unknown as LedgerProps['metadata'];
+    const changes = { k: { password: 'hunter2' } } as unknown as ILedgerProps['metadata'];
 
     expect(() => ledger().withMetadata(changes)).toThrow(
       expect.objectContaining({ message: expect.not.stringContaining('hunter2') }),

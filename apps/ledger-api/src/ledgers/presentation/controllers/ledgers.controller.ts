@@ -13,28 +13,28 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { Response } from 'express';
-import { OrganizationId } from '../../core/tenant/organization-id.decorator.js';
-import { TenantGuard } from '../../core/tenant/tenant.guard.js';
-import { CreateLedgerUseCase } from '../application/use-cases/create-ledger.use-case.js';
-import { DeleteLedgerMetadataUseCase } from '../application/use-cases/delete-ledger-metadata.use-case.js';
-import { GetLedgerUseCase } from '../application/use-cases/get-ledger.use-case.js';
-import { ListLedgersUseCase } from '../application/use-cases/list-ledgers.use-case.js';
-import { SaveLedgerMetadataUseCase } from '../application/use-cases/save-ledger-metadata.use-case.js';
-import { createLedgerSchema, type CreateLedgerDto } from './dto/create-ledger.dto.js';
-import { listLedgersQuerySchema, type ListLedgersQueryDto } from './dto/list-ledgers-query.dto.js';
+import { OrganizationId } from '../../../core/tenant/organization-id.decorator.js';
+import { TenantGuard } from '../../../core/tenant/tenant.guard.js';
+import { CreateLedgerUseCase } from '../../application/use-cases/create-ledger.use-case.js';
+import { DeleteLedgerMetadataUseCase } from '../../application/use-cases/delete-ledger-metadata.use-case.js';
+import { GetLedgerUseCase } from '../../application/use-cases/get-ledger.use-case.js';
+import { ListLedgersUseCase } from '../../application/use-cases/list-ledgers.use-case.js';
+import { SaveLedgerMetadataUseCase } from '../../application/use-cases/save-ledger-metadata.use-case.js';
+import { createLedgerSchema, type CreateLedgerDto } from '../dto/create-ledger.dto.js';
+import { listLedgersQuerySchema, type ListLedgersQueryDto } from '../dto/list-ledgers-query.dto.js';
 import {
   toLedgerPageResponseDto,
   toLedgerResponseDto,
-  type LedgerPageResponseDto,
-  type LedgerResponseDto,
-} from './dto/ledger-response.dto.js';
+  type ILedgerPageResponse,
+  type ILedgerResponse,
+} from '../dto/ledger-response.dto.js';
 import {
   ledgerMetadataKeySchema,
   saveLedgerMetadataSchema,
   type SaveLedgerMetadataDto,
-} from './dto/ledger-metadata.dto.js';
-import { ledgerNameSchema } from './dto/ledger-name.dto.js';
-import { LedgerExceptionFilter } from './ledger-exception.filter.js';
+} from '../dto/ledger-metadata.dto.js';
+import { ledgerNameSchema } from '../dto/ledger-name.dto.js';
+import { LedgerExceptionFilter } from '../filters/ledger-exception.filter.js';
 
 const LEDGERS_PATH = 'ledgers';
 
@@ -72,7 +72,7 @@ export class LedgersController {
     @OrganizationId() organizationId: string,
     @Body({ schema: createLedgerSchema }) body: CreateLedgerDto,
     @Res({ passthrough: true }) response: Response,
-  ): Promise<LedgerResponseDto> {
+  ): Promise<ILedgerResponse> {
     const ledger = await this.createLedger.execute({
       organizationId,
       name: body.name,
@@ -98,7 +98,7 @@ export class LedgersController {
   async list(
     @OrganizationId() organizationId: string,
     @Query({ schema: listLedgersQuerySchema }) query: ListLedgersQueryDto,
-  ): Promise<LedgerPageResponseDto> {
+  ): Promise<ILedgerPageResponse> {
     const page = await this.listLedgers.execute({
       organizationId,
       pageSize: query.pageSize,
@@ -118,7 +118,7 @@ export class LedgersController {
   async get(
     @OrganizationId() organizationId: string,
     @Param('name', { schema: ledgerNameSchema }) name: string,
-  ): Promise<LedgerResponseDto> {
+  ): Promise<ILedgerResponse> {
     const ledger = await this.getLedger.execute({ organizationId, name });
     return toLedgerResponseDto(ledger);
   }
