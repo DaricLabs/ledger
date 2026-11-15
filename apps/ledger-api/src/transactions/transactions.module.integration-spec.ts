@@ -14,8 +14,8 @@ import {
 import { GetTransactionUseCase } from './application/use-cases/get-transaction.use-case.js';
 import { ListTransactionsUseCase } from './application/use-cases/list-transactions.use-case.js';
 import { InsufficientFundsError } from '../accounts/domain/errors/insufficient-funds.error.js';
-import { TransactionNotFoundError } from './domain/transaction-not-found.error.js';
-import { TransactionReferenceAlreadyExistsError } from './domain/transaction-reference-already-exists.error.js';
+import { TransactionNotFoundError } from './domain/errors/transaction-not-found.error.js';
+import { TransactionReferenceAlreadyExistsError } from './domain/errors/transaction-reference-already-exists.error.js';
 import { TransactionsModule } from './transactions.module.js';
 
 // Every test uses new organization ids, so tests never see each other's rows

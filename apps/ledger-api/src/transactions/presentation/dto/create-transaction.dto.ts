@@ -4,7 +4,7 @@ import { accountAddressSchema } from '../../../accounts/presentation/dto/account
 import {
   TRANSACTION_MAX_POSTINGS,
   TRANSACTION_REFERENCE_MAX_LENGTH,
-} from '../../domain/transaction-limits.js';
+} from '../../domain/constants/transaction-limits.constant.js';
 
 /** An asset code in a request. It checks the shape only. */
 const assetCodeSchema = z.string().regex(ASSET_CODE_PATTERN, {

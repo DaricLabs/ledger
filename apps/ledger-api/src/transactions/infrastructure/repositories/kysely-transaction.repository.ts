@@ -6,10 +6,10 @@ import type {
   ITransactionPage,
   ITransactionPageQuery,
   ITransactionRepository,
-} from '../application/ports/transaction-repository.port.js';
-import { Posting } from '../domain/posting.js';
-import { TransactionReferenceAlreadyExistsError } from '../domain/transaction-reference-already-exists.error.js';
-import { Transaction } from '../domain/transaction.entity.js';
+} from '../../application/ports/transaction-repository.port.js';
+import { Posting } from '../../domain/value-objects/posting.vo.js';
+import { TransactionReferenceAlreadyExistsError } from '../../domain/errors/transaction-reference-already-exists.error.js';
+import { Transaction } from '../../domain/entities/transaction.entity.js';
 
 /** Postgres name of `unique (organization_id, ledger_id, reference)` on `transactions`. */
 const REFERENCE_UNIQUE_CONSTRAINT = 'transactions_organization_id_ledger_id_reference_key';

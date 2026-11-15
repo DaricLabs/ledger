@@ -4,9 +4,9 @@ import type { ITenantTransactionRunner } from '../../../journal/application/port
 import type { ILedgerRepository } from '../../../ledgers/application/ports/ledger-repository.port.js';
 import { Ledger } from '../../../ledgers/domain/entities/ledger.entity.js';
 import { LedgerNotFoundError } from '../../../ledgers/domain/errors/ledger-not-found.error.js';
-import { Posting } from '../../domain/posting.js';
-import { TransactionNotFoundError } from '../../domain/transaction-not-found.error.js';
-import { Transaction } from '../../domain/transaction.entity.js';
+import { Posting } from '../../domain/value-objects/posting.vo.js';
+import { TransactionNotFoundError } from '../../domain/errors/transaction-not-found.error.js';
+import { Transaction } from '../../domain/entities/transaction.entity.js';
 import type { ITransactionRepository } from '../ports/transaction-repository.port.js';
 import { GetTransactionUseCase } from './get-transaction.use-case.js';
 

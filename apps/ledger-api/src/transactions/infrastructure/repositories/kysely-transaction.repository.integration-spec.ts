@@ -7,16 +7,16 @@ import {
   type LedgerDatabase,
 } from '@ledger/database/storage';
 import type { TenantTransaction } from '@ledger/database';
-import { Uuidv7IdGenerator } from '../../ids/infrastructure/adapters/uuidv7-id-generator.adapter.js';
-import { AccountBalance } from '../../accounts/domain/entities/account-balance.entity.js';
-import { Posting } from '../domain/posting.js';
-import { TransactionReferenceAlreadyExistsError } from '../domain/transaction-reference-already-exists.error.js';
-import { Transaction } from '../domain/transaction.entity.js';
+import { Uuidv7IdGenerator } from '../../../ids/infrastructure/adapters/uuidv7-id-generator.adapter.js';
+import { AccountBalance } from '../../../accounts/domain/entities/account-balance.entity.js';
+import { Posting } from '../../domain/value-objects/posting.vo.js';
+import { TransactionReferenceAlreadyExistsError } from '../../domain/errors/transaction-reference-already-exists.error.js';
+import { Transaction } from '../../domain/entities/transaction.entity.js';
 import type {
   ITransactionPage,
   ITransactionPageQuery,
-} from '../application/ports/transaction-repository.port.js';
-import { KyselyAccountBalanceRepository } from '../../accounts/infrastructure/repositories/kysely-account-balance.repository.js';
+} from '../../application/ports/transaction-repository.port.js';
+import { KyselyAccountBalanceRepository } from '../../../accounts/infrastructure/repositories/kysely-account-balance.repository.js';
 import { KyselyTransactionRepository } from './kysely-transaction.repository.js';
 
 // The repositories have no constructor arguments, so these tests do not need Nest.

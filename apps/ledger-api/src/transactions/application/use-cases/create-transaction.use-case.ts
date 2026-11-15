@@ -1,6 +1,11 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { AccountAddress, AssetCode, Money } from '@ledger/domain';
 import {
+  ACCOUNT_BALANCE_REPOSITORY,
+  type IAccountBalanceRepository,
+} from '../../../accounts/application/ports/account-balance-repository.port.js';
+import { AccountBalance } from '../../../accounts/domain/entities/account-balance.entity.js';
+import {
   ID_GENERATOR,
   type IIdGenerator,
 } from '../../../ids/application/ports/id-generator.port.js';
@@ -21,15 +26,10 @@ import {
   type ILedgerRepository,
 } from '../../../ledgers/application/ports/ledger-repository.port.js';
 import { LedgerNotFoundError } from '../../../ledgers/domain/errors/ledger-not-found.error.js';
-import { AccountBalance } from '../../../accounts/domain/entities/account-balance.entity.js';
-import { Posting } from '../../domain/posting.js';
-import { TRANSACTION_LOG_TYPE } from '../../domain/transaction-log-type.js';
-import { Transaction } from '../../domain/transaction.entity.js';
-import { toPostingsPayload } from '../transaction-payload.js';
-import {
-  ACCOUNT_BALANCE_REPOSITORY,
-  type IAccountBalanceRepository,
-} from '../../../accounts/application/ports/account-balance-repository.port.js';
+import { TRANSACTION_LOG_TYPE } from '../../domain/constants/transaction-log-type.constant.js';
+import { Transaction } from '../../domain/entities/transaction.entity.js';
+import { Posting } from '../../domain/value-objects/posting.vo.js';
+import { toPostingsPayload } from '../mappers/transaction-payload.mapper.js';
 import {
   TRANSACTION_REPOSITORY,
   type ITransactionRepository,

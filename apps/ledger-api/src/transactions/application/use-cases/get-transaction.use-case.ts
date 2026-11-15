@@ -8,8 +8,8 @@ import {
   type ILedgerRepository,
 } from '../../../ledgers/application/ports/ledger-repository.port.js';
 import { LedgerNotFoundError } from '../../../ledgers/domain/errors/ledger-not-found.error.js';
-import { TransactionNotFoundError } from '../../domain/transaction-not-found.error.js';
-import type { Transaction } from '../../domain/transaction.entity.js';
+import { TransactionNotFoundError } from '../../domain/errors/transaction-not-found.error.js';
+import type { Transaction } from '../../domain/entities/transaction.entity.js';
 import {
   TRANSACTION_REPOSITORY,
   type ITransactionRepository,

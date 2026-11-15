@@ -10,30 +10,30 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { Response } from 'express';
-import { AccountExceptionFilter } from '../../accounts/presentation/filters/account-exception.filter.js';
-import { OrganizationId } from '../../core/tenant/organization-id.decorator.js';
-import { TenantGuard } from '../../core/tenant/tenant.guard.js';
-import { LedgerExceptionFilter } from '../../ledgers/presentation/filters/ledger-exception.filter.js';
-import { ledgerNameSchema } from '../../ledgers/presentation/dto/ledger-name.dto.js';
-import { CreateTransactionUseCase } from '../application/use-cases/create-transaction.use-case.js';
-import { GetTransactionUseCase } from '../application/use-cases/get-transaction.use-case.js';
-import { ListTransactionsUseCase } from '../application/use-cases/list-transactions.use-case.js';
+import { AccountExceptionFilter } from '../../../accounts/presentation/filters/account-exception.filter.js';
+import { OrganizationId } from '../../../core/tenant/organization-id.decorator.js';
+import { TenantGuard } from '../../../core/tenant/tenant.guard.js';
+import { LedgerExceptionFilter } from '../../../ledgers/presentation/filters/ledger-exception.filter.js';
+import { ledgerNameSchema } from '../../../ledgers/presentation/dto/ledger-name.dto.js';
+import { CreateTransactionUseCase } from '../../application/use-cases/create-transaction.use-case.js';
+import { GetTransactionUseCase } from '../../application/use-cases/get-transaction.use-case.js';
+import { ListTransactionsUseCase } from '../../application/use-cases/list-transactions.use-case.js';
 import {
   createTransactionSchema,
   type CreateTransactionDto,
-} from './dto/create-transaction.dto.js';
+} from '../dto/create-transaction.dto.js';
 import {
   listTransactionsQuerySchema,
   type ListTransactionsQueryDto,
-} from './dto/list-transactions-query.dto.js';
-import { transactionIdSchema } from './dto/transaction-id.dto.js';
+} from '../dto/list-transactions-query.dto.js';
+import { transactionIdSchema } from '../dto/transaction-id.dto.js';
 import {
   toTransactionPageResponseDto,
   toTransactionResponseDto,
-  type TransactionPageResponseDto,
-  type TransactionResponseDto,
-} from './dto/transaction-response.dto.js';
-import { TransactionExceptionFilter } from './transaction-exception.filter.js';
+  type ITransactionPageResponse,
+  type ITransactionResponse,
+} from '../dto/transaction-response.dto.js';
+import { TransactionExceptionFilter } from '../filters/transaction-exception.filter.js';
 
 const LEDGERS_PATH = 'ledgers';
 const TRANSACTIONS_PATH = 'transactions';
@@ -90,7 +90,7 @@ export class TransactionsController {
     @Param('ledgerName', { schema: ledgerNameSchema }) ledgerName: string,
     @Body({ schema: createTransactionSchema }) body: CreateTransactionDto,
     @Res({ passthrough: true }) response: Response,
-  ): Promise<TransactionResponseDto> {
+  ): Promise<ITransactionResponse> {
     const transaction = await this.createTransaction.execute({
       organizationId,
       ledgerName,
@@ -124,7 +124,7 @@ export class TransactionsController {
     @OrganizationId() organizationId: string,
     @Param('ledgerName', { schema: ledgerNameSchema }) ledgerName: string,
     @Query({ schema: listTransactionsQuerySchema }) query: ListTransactionsQueryDto,
-  ): Promise<TransactionPageResponseDto> {
+  ): Promise<ITransactionPageResponse> {
     const page = await this.listTransactions.execute({
       organizationId,
       ledgerName,
@@ -149,7 +149,7 @@ export class TransactionsController {
     @OrganizationId() organizationId: string,
     @Param('ledgerName', { schema: ledgerNameSchema }) ledgerName: string,
     @Param('transactionId', { schema: transactionIdSchema }) transactionId: string,
-  ): Promise<TransactionResponseDto> {
+  ): Promise<ITransactionResponse> {
     const transaction = await this.getTransaction.execute({
       organizationId,
       ledgerName,

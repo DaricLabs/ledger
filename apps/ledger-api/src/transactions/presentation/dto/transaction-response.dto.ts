@@ -1,10 +1,10 @@
 import type { ITransactionPage } from '../../application/ports/transaction-repository.port.js';
-import type { Posting } from '../../domain/posting.js';
-import type { Transaction } from '../../domain/transaction.entity.js';
+import type { Posting } from '../../domain/value-objects/posting.vo.js';
+import type { Transaction } from '../../domain/entities/transaction.entity.js';
 import { encodeTransactionCursor } from './transaction-page-cursor.dto.js';
 
 /** A posting as clients see it. Field names are part of the public API. */
-export interface PostingResponseDto {
+export interface IPostingResponse {
   source: string;
   destination: string;
   asset: string;
@@ -17,18 +17,18 @@ export interface PostingResponseDto {
  * `organizationId` and `ledgerId` are not included: the caller already knows
  * them from the header and the URL.
  */
-export interface TransactionResponseDto {
+export interface ITransactionResponse {
   id: string;
   /** The id the caller gave to the transaction, or `null`. */
   reference: string | null;
-  postings: PostingResponseDto[];
+  postings: IPostingResponse[];
   /** When the transaction happened. ISO 8601 date in UTC, like `2026-11-07T10:00:00.000Z`. */
   postedAt: string;
   /** When the ledger saved it. ISO 8601 date in UTC. */
   createdAt: string;
 }
 
-function toPostingResponseDto(posting: Posting): PostingResponseDto {
+function toPostingResponseDto(posting: Posting): IPostingResponse {
   return {
     source: posting.source.value,
     destination: posting.destination.value,
@@ -37,7 +37,7 @@ function toPostingResponseDto(posting: Posting): PostingResponseDto {
   };
 }
 
-export function toTransactionResponseDto(transaction: Transaction): TransactionResponseDto {
+export function toTransactionResponseDto(transaction: Transaction): ITransactionResponse {
   return {
     id: transaction.id,
     reference: transaction.reference,
@@ -48,16 +48,16 @@ export function toTransactionResponseDto(transaction: Transaction): TransactionR
 }
 
 /** One page of `GET /ledgers/:ledgerName/transactions`. Field names are part of the public API. */
-export interface TransactionPageResponseDto {
+export interface ITransactionPageResponse {
   /** The transactions of this page, newest first. */
-  data: TransactionResponseDto[];
+  data: ITransactionResponse[];
   /** `true` when there is a next page. */
   hasMore: boolean;
   /** The `cursor` that gets the next page. It is there only when `hasMore` is `true`. */
   next?: string;
 }
 
-export function toTransactionPageResponseDto(page: ITransactionPage): TransactionPageResponseDto {
+export function toTransactionPageResponseDto(page: ITransactionPage): ITransactionPageResponse {
   const last = page.transactions.at(-1);
   return {
     data: page.transactions.map(toTransactionResponseDto),

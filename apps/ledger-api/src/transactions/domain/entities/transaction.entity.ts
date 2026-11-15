@@ -3,16 +3,16 @@ import {
   compareBalanceKeys,
   type AccountBalance,
   type IBalanceKey,
-} from '../../accounts/domain/entities/account-balance.entity.js';
-import { InvalidTransactionError } from './invalid-transaction.error.js';
-import type { Posting } from './posting.js';
+} from '../../../accounts/domain/entities/account-balance.entity.js';
+import { InvalidTransactionError } from '../errors/invalid-transaction.error.js';
+import type { Posting } from '../value-objects/posting.vo.js';
 import {
   TRANSACTION_MAX_POSTINGS,
   TRANSACTION_REFERENCE_MAX_LENGTH,
-} from './transaction-limits.js';
+} from '../constants/transaction-limits.constant.js';
 
 /** The data a transaction is made of. */
-export interface TransactionProps {
+export interface ITransactionProps {
   /** UUIDv7. Made by the caller (the use case), never by the database. */
   id: string;
   /** The owner organization. An opaque id from the Identity service. */
@@ -44,7 +44,7 @@ export interface TransactionProps {
  * storage with `Transaction.reconstitute`.
  */
 export class Transaction {
-  private constructor(private readonly props: Readonly<TransactionProps>) {}
+  private constructor(private readonly props: Readonly<ITransactionProps>) {}
 
   /**
    * Makes a NEW transaction and checks the rules for it.
@@ -52,7 +52,7 @@ export class Transaction {
    * @throws {InvalidTransactionError} If there are no postings or more than
    * `TRANSACTION_MAX_POSTINGS`, or the reference is empty or too long.
    */
-  static create(props: TransactionProps): Transaction {
+  static create(props: ITransactionProps): Transaction {
     if (props.postings.length < 1 || props.postings.length > TRANSACTION_MAX_POSTINGS) {
       throw new InvalidTransactionError(
         `A transaction must have 1 to ${TRANSACTION_MAX_POSTINGS} postings`,
@@ -80,12 +80,12 @@ export class Transaction {
    * transaction that followed them was ever saved, and the database has the
    * same checks. The postings must be in the order of their `seq`.
    */
-  static reconstitute(props: TransactionProps): Transaction {
+  static reconstitute(props: ITransactionProps): Transaction {
     return Transaction.from(props);
   }
 
   /** Copies the data, so the caller cannot change a transaction through what it passed in. */
-  private static from(props: TransactionProps): Transaction {
+  private static from(props: ITransactionProps): Transaction {
     return new Transaction(
       Object.freeze({
         id: props.id,
