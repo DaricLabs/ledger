@@ -1,6 +1,6 @@
 import { AccountAddress, AssetCode, Money } from '@ledger/domain';
-import { InvalidPostingError } from './invalid-posting.error.js';
-import { Posting } from './posting.js';
+import { InvalidPostingError } from '../errors/invalid-posting.error.js';
+import { Posting } from './posting.vo.js';
 
 const usd = AssetCode.of('USD');
 const a = AccountAddress.of('users:1');

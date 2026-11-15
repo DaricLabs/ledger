@@ -1,10 +1,10 @@
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { ValueObjectError } from '@ledger/domain';
-import { InvalidPostingError } from '../domain/invalid-posting.error.js';
-import { InvalidTransactionError } from '../domain/invalid-transaction.error.js';
-import type { TransactionDomainError } from '../domain/transaction-domain.error.js';
-import { TransactionNotFoundError } from '../domain/transaction-not-found.error.js';
-import { TransactionReferenceAlreadyExistsError } from '../domain/transaction-reference-already-exists.error.js';
+import { InvalidPostingError } from '../../domain/errors/invalid-posting.error.js';
+import { InvalidTransactionError } from '../../domain/errors/invalid-transaction.error.js';
+import type { TransactionDomainError } from '../../domain/errors/transaction-domain.error.js';
+import { TransactionNotFoundError } from '../../domain/errors/transaction-not-found.error.js';
+import { TransactionReferenceAlreadyExistsError } from '../../domain/errors/transaction-reference-already-exists.error.js';
 
 /**
  * Maps a domain error of this feature to the HTTP exception that the global

@@ -2,22 +2,22 @@ import { AccountAddress, AssetCode, Money, MoneyAmountOutOfRangeError } from '@l
 import {
   AccountBalance,
   balanceKeyText,
-} from '../../accounts/domain/entities/account-balance.entity.js';
-import { InsufficientFundsError } from '../../accounts/domain/errors/insufficient-funds.error.js';
-import { InvalidTransactionError } from './invalid-transaction.error.js';
-import { Posting } from './posting.js';
+} from '../../../accounts/domain/entities/account-balance.entity.js';
+import { InsufficientFundsError } from '../../../accounts/domain/errors/insufficient-funds.error.js';
+import { InvalidTransactionError } from '../errors/invalid-transaction.error.js';
+import { Posting } from '../value-objects/posting.vo.js';
 import {
   TRANSACTION_MAX_POSTINGS,
   TRANSACTION_REFERENCE_MAX_LENGTH,
-} from './transaction-limits.js';
-import { Transaction, type TransactionProps } from './transaction.entity.js';
+} from '../constants/transaction-limits.constant.js';
+import { Transaction, type ITransactionProps } from './transaction.entity.js';
 
 const usd = AssetCode.of('USD');
 const eur = AssetCode.of('EUR');
 const posting = (source: string, destination: string, amount: bigint, asset = usd) =>
   Posting.of(AccountAddress.of(source), AccountAddress.of(destination), Money.of(asset, amount));
 
-const props = (overrides: Partial<TransactionProps> = {}): TransactionProps => ({
+const props = (overrides: Partial<ITransactionProps> = {}): ITransactionProps => ({
   id: '0190a5d4-7b3c-7abc-8def-0123456789ab',
   organizationId: '0190a5d4-7b3c-7abc-8def-0123456789ac',
   ledgerId: '0190a5d4-7b3c-7abc-8def-0123456789ad',

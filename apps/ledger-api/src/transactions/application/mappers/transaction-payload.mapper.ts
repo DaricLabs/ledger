@@ -1,6 +1,9 @@
-import type { Posting } from '../domain/posting.js';
+import type { Posting } from '../../domain/value-objects/posting.vo.js';
 
-/** A posting as it goes into the journal and into events. Amounts are strings, because JSON has no `bigint`. */
+/**
+ * A posting as it goes into the journal and into events.
+ * Amounts are strings, because JSON has no `bigint`.
+ */
 export interface IPostingPayload {
   source: string;
   destination: string;

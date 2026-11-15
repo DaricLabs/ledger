@@ -1,5 +1,5 @@
 import type { TenantTransaction } from '@ledger/database';
-import type { Transaction } from '../../domain/transaction.entity.js';
+import type { Transaction } from '../../domain/entities/transaction.entity.js';
 
 /**
  * A place in the list of transactions of a ledger. The list is sorted by

@@ -12,9 +12,9 @@ import {
   balanceKeyText,
 } from '../../../accounts/domain/entities/account-balance.entity.js';
 import { InsufficientFundsError } from '../../../accounts/domain/errors/insufficient-funds.error.js';
-import { InvalidPostingError } from '../../domain/invalid-posting.error.js';
-import { InvalidTransactionError } from '../../domain/invalid-transaction.error.js';
-import { TransactionReferenceAlreadyExistsError } from '../../domain/transaction-reference-already-exists.error.js';
+import { InvalidPostingError } from '../../domain/errors/invalid-posting.error.js';
+import { InvalidTransactionError } from '../../domain/errors/invalid-transaction.error.js';
+import { TransactionReferenceAlreadyExistsError } from '../../domain/errors/transaction-reference-already-exists.error.js';
 import type { IAccountBalanceRepository } from '../../../accounts/application/ports/account-balance-repository.port.js';
 import type { ITransactionRepository } from '../ports/transaction-repository.port.js';
 import { CreateTransactionUseCase } from './create-transaction.use-case.js';

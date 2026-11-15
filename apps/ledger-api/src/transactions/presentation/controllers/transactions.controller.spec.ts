@@ -5,22 +5,22 @@ import { AccountAddress, AssetCode, InvalidAccountAddressError, Money } from '@l
 import { LoggerModule } from 'nestjs-pino';
 import request from 'supertest';
 import type { App } from 'supertest/types.js';
-import { ErrorsModule } from '../../core/errors/errors.module.js';
-import { ORGANIZATION_ID_HEADER } from '../../core/tenant/tenant.guard.js';
-import { ValidationModule } from '../../core/validation/validation.module.js';
-import { LedgerNotFoundError } from '../../ledgers/domain/errors/ledger-not-found.error.js';
-import { CreateTransactionUseCase } from '../application/use-cases/create-transaction.use-case.js';
-import { GetTransactionUseCase } from '../application/use-cases/get-transaction.use-case.js';
-import { ListTransactionsUseCase } from '../application/use-cases/list-transactions.use-case.js';
-import { InsufficientFundsError } from '../../accounts/domain/errors/insufficient-funds.error.js';
-import { InvalidPostingError } from '../domain/invalid-posting.error.js';
-import { InvalidTransactionError } from '../domain/invalid-transaction.error.js';
-import { Posting } from '../domain/posting.js';
-import { TransactionDomainError } from '../domain/transaction-domain.error.js';
-import { TransactionNotFoundError } from '../domain/transaction-not-found.error.js';
-import { TransactionReferenceAlreadyExistsError } from '../domain/transaction-reference-already-exists.error.js';
-import { Transaction } from '../domain/transaction.entity.js';
-import { encodeTransactionCursor } from './dto/transaction-page-cursor.dto.js';
+import { ErrorsModule } from '../../../core/errors/errors.module.js';
+import { ORGANIZATION_ID_HEADER } from '../../../core/tenant/tenant.guard.js';
+import { ValidationModule } from '../../../core/validation/validation.module.js';
+import { LedgerNotFoundError } from '../../../ledgers/domain/errors/ledger-not-found.error.js';
+import { CreateTransactionUseCase } from '../../application/use-cases/create-transaction.use-case.js';
+import { GetTransactionUseCase } from '../../application/use-cases/get-transaction.use-case.js';
+import { ListTransactionsUseCase } from '../../application/use-cases/list-transactions.use-case.js';
+import { InsufficientFundsError } from '../../../accounts/domain/errors/insufficient-funds.error.js';
+import { InvalidPostingError } from '../../domain/errors/invalid-posting.error.js';
+import { InvalidTransactionError } from '../../domain/errors/invalid-transaction.error.js';
+import { Posting } from '../../domain/value-objects/posting.vo.js';
+import { TransactionDomainError } from '../../domain/errors/transaction-domain.error.js';
+import { TransactionNotFoundError } from '../../domain/errors/transaction-not-found.error.js';
+import { TransactionReferenceAlreadyExistsError } from '../../domain/errors/transaction-reference-already-exists.error.js';
+import { Transaction } from '../../domain/entities/transaction.entity.js';
+import { encodeTransactionCursor } from '../dto/transaction-page-cursor.dto.js';
 import { TransactionsController } from './transactions.controller.js';
 
 // These tests start a real Nest app with the real guard, validation pipe and

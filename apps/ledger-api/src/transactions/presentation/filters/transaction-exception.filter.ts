@@ -1,9 +1,9 @@
 import { Catch } from '@nestjs/common';
 import type { ArgumentsHost, ExceptionFilter } from '@nestjs/common';
 import { ValueObjectError } from '@ledger/domain';
-import { AllExceptionsFilter } from '../../core/errors/all-exceptions.filter.js';
-import { TransactionDomainError } from '../domain/transaction-domain.error.js';
-import { toTransactionHttpException } from './transaction-http-errors.js';
+import { AllExceptionsFilter } from '../../../core/errors/all-exceptions.filter.js';
+import { TransactionDomainError } from '../../domain/errors/transaction-domain.error.js';
+import { toTransactionHttpException } from '../mappers/transaction-http-exception.mapper.js';
 
 /**
  * Turns the transaction domain errors, and the errors of the shared value
@@ -12,7 +12,7 @@ import { toTransactionHttpException } from './transaction-http-errors.js';
  * global filter.
  *
  * It catches the base classes, so a new error is caught without any change
- * here. Its status is decided in `transaction-http-errors.ts`.
+ * here. Its status is decided in `transaction-http-exception.mapper.ts`.
  *
  * It does not build the response body itself. It maps the error and hands it
  * to the core filter, so there is still only one error body format.
