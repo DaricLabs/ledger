@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AccountsModule } from '../accounts/accounts.module.js';
+import { IdempotencyModule } from '../idempotency/idempotency.module.js';
 import { IdsModule } from '../ids/ids.module.js';
 import { JournalModule } from '../journal/journal.module.js';
 import { LedgersModule } from '../ledgers/ledgers.module.js';
@@ -16,11 +17,12 @@ import { TransactionsController } from './presentation/controllers/transactions.
  * A transaction belongs to a ledger, so this feature imports `LedgersModule`
  * to find a ledger by its name (`LEDGER_REPOSITORY`). It imports
  * `AccountsModule` to create accounts and change their balances
- * (`ACCOUNT_BALANCE_REPOSITORY`). Ledgers and accounts never import this
- * feature.
+ * (`ACCOUNT_BALANCE_REPOSITORY`), and `IdempotencyModule` so a create call can
+ * be repeated safely (`IDEMPOTENCY_KEY_REPOSITORY`). Ledgers, accounts and
+ * idempotency never import this feature.
  */
 @Module({
-  imports: [AccountsModule, IdsModule, JournalModule, LedgersModule],
+  imports: [AccountsModule, IdempotencyModule, IdsModule, JournalModule, LedgersModule],
   controllers: [TransactionsController],
   providers: [
     { provide: TRANSACTION_REPOSITORY, useClass: KyselyTransactionRepository },

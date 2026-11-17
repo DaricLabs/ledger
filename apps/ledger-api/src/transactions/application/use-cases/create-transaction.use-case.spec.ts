@@ -1,5 +1,7 @@
 import type { TenantTransaction } from '@ledger/database';
-import { InvalidAccountAddressError, Money } from '@ledger/domain';
+import { AccountAddress, AssetCode, InvalidAccountAddressError, Money } from '@ledger/domain';
+import { IdempotencyKeyReusedError } from '../../../idempotency/domain/errors/idempotency-key-reused.error.js';
+import type { IIdempotencyKeyRepository } from '../../../idempotency/application/ports/idempotency-key-repository.port.js';
 import type { IIdGenerator } from '../../../ids/application/ports/id-generator.port.js';
 import type { ILedgerLogWriter } from '../../../journal/application/ports/ledger-log-writer.port.js';
 import type { IOutboxWriter } from '../../../journal/application/ports/outbox-writer.port.js';
@@ -12,6 +14,9 @@ import {
   balanceKeyText,
 } from '../../../accounts/domain/entities/account-balance.entity.js';
 import { InsufficientFundsError } from '../../../accounts/domain/errors/insufficient-funds.error.js';
+import { Transaction } from '../../domain/entities/transaction.entity.js';
+import { Posting } from '../../domain/value-objects/posting.vo.js';
+import { toCreateTransactionRequestHash } from '../mappers/create-transaction-request-hash.mapper.js';
 import { InvalidPostingError } from '../../domain/errors/invalid-posting.error.js';
 import { InvalidTransactionError } from '../../domain/errors/invalid-transaction.error.js';
 import { TransactionReferenceAlreadyExistsError } from '../../domain/errors/transaction-reference-already-exists.error.js';
@@ -60,6 +65,13 @@ function setup(held: Held = {}) {
     updateMetadata: vi.fn<ILedgerRepository['updateMetadata']>(),
     findPage: vi.fn<ILedgerRepository['findPage']>(),
   };
+  const idempotencyKeys = {
+    // A new key by default: the work goes on.
+    claim: vi.fn<IIdempotencyKeyRepository['claim']>(async () => {
+      calls.push('claim');
+      return { replayed: false };
+    }),
+  };
   const balances = {
     open: vi.fn<IAccountBalanceRepository['open']>(async () => {
       calls.push('open');
@@ -101,6 +113,7 @@ function setup(held: Held = {}) {
     ids,
     transactions as unknown as ITenantTransactionRunner, // the fake is not generic, the port is
     ledgers,
+    idempotencyKeys,
     balances,
     transactionRepository,
     logs,
@@ -113,6 +126,7 @@ function setup(held: Held = {}) {
     transactions,
     ids,
     ledgers,
+    idempotencyKeys,
     balances,
     transactionRepository,
     logs,
@@ -187,7 +201,7 @@ describe('CreateTransactionUseCase', () => {
   it('returns the transaction it saved', async () => {
     const { useCase, transactionRepository } = setup();
 
-    const transaction = await useCase.execute(input);
+    const { transaction } = await useCase.execute(input);
 
     expect(transactionRepository.insert.mock.calls[0]?.[1]).toBe(transaction);
     expect(transaction.id).toBe(TRANSACTION_ID);
@@ -206,7 +220,7 @@ describe('CreateTransactionUseCase', () => {
   it('uses no reference when none is given', async () => {
     const { useCase } = setup();
 
-    const transaction = await useCase.execute({ ...input, reference: undefined });
+    const { transaction } = await useCase.execute({ ...input, reference: undefined });
 
     expect(transaction.reference).toBeNull();
   });
@@ -249,7 +263,7 @@ describe('CreateTransactionUseCase', () => {
   it('writes a TRANSACTION_CREATED log that is about the transaction', async () => {
     const { useCase, logs, trx } = setup();
 
-    const transaction = await useCase.execute(input);
+    const { transaction } = await useCase.execute(input);
 
     expect(logs.append).toHaveBeenCalledExactlyOnceWith(trx, {
       ledgerId: LEDGER_ID,
@@ -269,7 +283,7 @@ describe('CreateTransactionUseCase', () => {
   it('writes a ledger.transaction.created outbox event with amounts as strings', async () => {
     const { useCase, outbox, trx } = setup();
 
-    const transaction = await useCase.execute(input);
+    const { transaction } = await useCase.execute(input);
 
     expect(outbox.append).toHaveBeenCalledExactlyOnceWith(trx, {
       ledgerId: LEDGER_ID,
@@ -291,6 +305,142 @@ describe('CreateTransactionUseCase', () => {
     });
     // The payload must be real JSON: a bigint would throw here.
     expect(() => JSON.stringify(outbox.append.mock.calls[0]?.[1].payload)).not.toThrow();
+  });
+
+  it('returns replayed: false and does not touch the idempotency port without a key', async () => {
+    const { useCase, idempotencyKeys } = setup();
+
+    const result = await useCase.execute(input);
+
+    expect(result.replayed).toBe(false);
+    expect(idempotencyKeys.claim).not.toHaveBeenCalled();
+  });
+
+  describe('with an idempotency key', () => {
+    const keyed = { ...input, idempotencyKey: 'key-1' };
+
+    it('claims the key after the ledger is found and before any money moves', async () => {
+      const { useCase, calls } = setup();
+
+      await useCase.execute(keyed);
+
+      expect(calls).toEqual([
+        'begin',
+        'find ledger',
+        'claim',
+        'open',
+        'lock',
+        'save balances',
+        'insert',
+        'log',
+        'outbox',
+        'commit',
+      ]);
+    });
+
+    it('claims in the same transaction, for the ledger, with the id of the new transaction', async () => {
+      const { useCase, idempotencyKeys, trx } = setup();
+
+      const { transaction, replayed } = await useCase.execute(keyed);
+
+      expect(replayed).toBe(false);
+      expect(transaction.id).toBe(TRANSACTION_ID);
+      expect(idempotencyKeys.claim).toHaveBeenCalledExactlyOnceWith(trx, LEDGER_ID, {
+        operation: 'transactions.create',
+        key: 'key-1',
+        requestHash: toCreateTransactionRequestHash(input),
+        transactionId: TRANSACTION_ID,
+      });
+    });
+
+    it('returns the first transaction and writes nothing when the key was used before', async () => {
+      const { useCase, idempotencyKeys, ids, balances, transactionRepository, logs, outbox, trx } =
+        setup();
+      const first = Transaction.create({
+        id: '0190a5d4-7b3c-7abc-8def-0123456789ae',
+        organizationId: ORG_ID,
+        ledgerId: LEDGER_ID,
+        reference: 'order-1',
+        postings: [
+          Posting.of(
+            AccountAddress.of('world'),
+            AccountAddress.of('users:1'),
+            Money.of(AssetCode.of('USD'), 5n),
+          ),
+        ],
+        postedAt: new Date('2026-11-16T10:00:00.000Z'),
+        createdAt: new Date('2026-11-16T10:00:00.000Z'),
+      });
+      idempotencyKeys.claim.mockResolvedValueOnce({ replayed: true, transactionId: first.id });
+      transactionRepository.findById.mockResolvedValueOnce(first);
+
+      const result = await useCase.execute(keyed);
+
+      expect(result).toEqual({ transaction: first, replayed: true });
+      expect(transactionRepository.findById).toHaveBeenCalledExactlyOnceWith(
+        trx,
+        LEDGER_ID,
+        first.id,
+      );
+      expect(ids.next).toHaveBeenCalledTimes(1); // only the id that the claim carried
+      expect(balances.open).not.toHaveBeenCalled();
+      expect(balances.save).not.toHaveBeenCalled();
+      expect(transactionRepository.insert).not.toHaveBeenCalled();
+      expect(logs.append).not.toHaveBeenCalled();
+      expect(outbox.append).not.toHaveBeenCalled();
+    });
+
+    it('passes IdempotencyKeyReusedError through and writes nothing', async () => {
+      const { useCase, idempotencyKeys, balances, transactionRepository } = setup();
+      idempotencyKeys.claim.mockRejectedValueOnce(new IdempotencyKeyReusedError());
+
+      await expect(useCase.execute(keyed)).rejects.toBeInstanceOf(IdempotencyKeyReusedError);
+
+      expect(balances.open).not.toHaveBeenCalled();
+      expect(transactionRepository.insert).not.toHaveBeenCalled();
+    });
+
+    it('does not claim a key for a ledger that does not exist', async () => {
+      const { useCase, ledgers, idempotencyKeys } = setup();
+      ledgers.findByName.mockResolvedValueOnce(null);
+
+      await expect(useCase.execute(keyed)).rejects.toBeInstanceOf(LedgerNotFoundError);
+
+      expect(idempotencyKeys.claim).not.toHaveBeenCalled();
+    });
+
+    it('does not claim a key, or open a transaction, for invalid postings', async () => {
+      const { useCase, transactions, idempotencyKeys } = setup();
+
+      await expect(
+        useCase.execute({ ...keyed, postings: [posting('world', 'world', 1n)] }),
+      ).rejects.toBeInstanceOf(InvalidPostingError);
+
+      expect(transactions.run).not.toHaveBeenCalled();
+      expect(idempotencyKeys.claim).not.toHaveBeenCalled();
+    });
+
+    it('fails without a commit when the money is missing, so the key is rolled back', async () => {
+      const { useCase, calls } = setup({ 'users:1 USD': 10n });
+
+      await expect(
+        useCase.execute({
+          ...keyed,
+          postings: [posting('users:1', 'users:2', 11n)],
+        }),
+      ).rejects.toBeInstanceOf(InsufficientFundsError);
+
+      expect(calls).toContain('claim');
+      expect(calls).not.toContain('commit');
+    });
+
+    it('fails loudly when a key points to a transaction that is missing', async () => {
+      const { useCase, idempotencyKeys, transactionRepository } = setup();
+      idempotencyKeys.claim.mockResolvedValueOnce({ replayed: true, transactionId: 'gone' });
+      transactionRepository.findById.mockResolvedValueOnce(null);
+
+      await expect(useCase.execute(keyed)).rejects.toThrow('missing transaction');
+    });
   });
 
   describe('when something is wrong', () => {

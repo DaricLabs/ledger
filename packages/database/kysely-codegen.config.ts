@@ -6,10 +6,4 @@ export default defineConfig({
   outFile: './src/generated/db.ts',
   typeMapping: { numeric: 'MoneyColumn' },
   customImports: { MoneyColumn: '../money-column.js#MoneyColumn' },
-  overrides: {
-    columns: {
-      'idempotency_keys.method': `'POST' | 'PUT' | 'PATCH' | 'DELETE'`,
-      'idempotency_keys.state': `Generated<'in_progress' | 'completed'>`,
-    },
-  },
 });

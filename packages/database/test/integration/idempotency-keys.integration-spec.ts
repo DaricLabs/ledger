@@ -1,11 +1,16 @@
+import { randomUUIDv7 } from 'node:crypto';
 import { sql, type Kysely, type Transaction } from 'kysely';
 import type { DB } from '../../src/storage.js';
 import { createRuntimeDb, inTenant } from '../support/db.js';
-import { insertIdempotencyKey, insertLedger, randomName, sha256Like } from '../support/fixtures.js';
-import { randomUUIDv7 } from 'node:crypto';
+import {
+  insertIdempotencyKey,
+  insertLedger,
+  insertTransaction,
+  randomName,
+  sha256Like,
+} from '../support/fixtures.js';
 
-const MINUTE = 60_000;
-const HOUR = 60 * MINUTE;
+const HOUR = 3_600_000;
 
 describe('idempotency_keys', () => {
   let db: Kysely<DB>;
@@ -28,25 +33,8 @@ describe('idempotency_keys', () => {
     });
   }
 
-  // `created_at` is set explicitly (30 minutes ago) so `completed_at` is clearly after it,
-  // even if the database clock and the test clock differ a little.
-  const completed = {
-    state: 'completed',
-    response_status: 201,
-    response_body: {},
-    created_at: new Date(Date.now() - 30 * MINUTE),
-    completed_at: new Date(),
-    lock_expires_at: null,
-  } as const;
-
-  it('accepts an in-progress key that holds a lease', async () => {
+  it('accepts a key that points to a transaction of the same ledger', async () => {
     await withLedger((trx, org, ledgerId) => insertIdempotencyKey(trx, org, ledgerId));
-  });
-
-  it('accepts a completed key that stores the response', async () => {
-    await withLedger((trx, org, ledgerId) =>
-      insertIdempotencyKey(trx, org, ledgerId, { ...completed }),
-    );
   });
 
   describe('uniqueness (organization, ledger, operation, key)', () => {
@@ -69,57 +57,34 @@ describe('idempotency_keys', () => {
     });
   });
 
-  it.each([
-    [
-      'a completed key without response_status',
-      { ...completed, response_status: null },
-      'idempotency_keys_completed_requires_response',
-    ],
-    [
-      'a completed key without response_body',
-      { ...completed, response_body: null },
-      'idempotency_keys_completed_requires_response',
-    ],
-    [
-      'a completed key without completed_at',
-      { ...completed, completed_at: null },
-      'idempotency_keys_completed_requires_response',
-    ],
-    [
-      'an in-progress key without a lease',
-      { lock_expires_at: null },
-      'idempotency_keys_in_progress_requires_lock',
-    ],
-    [
-      'an expiry that is not after creation',
-      { expires_at: new Date(Date.now() - HOUR) },
-      'idempotency_keys_expiry_after_created',
-    ],
-    [
-      'completion before creation',
-      { ...completed, completed_at: new Date(Date.now() - HOUR) },
-      'idempotency_keys_completed_after_created',
-    ],
-    [
-      'a response status below 100',
-      { response_status: 99 },
-      'idempotency_keys_response_status_valid',
-    ],
-    [
-      'a response status above 599',
-      { response_status: 600 },
-      'idempotency_keys_response_status_valid',
-    ],
-    ['the method GET', { method: 'GET' as never }, 'idempotency_keys_method_valid'],
-    ['a path without a leading slash', { path: 'v2/transactions' }, 'idempotency_keys_path_valid'],
-    ['a path over 512 characters', { path: `/${'a'.repeat(512)}` }, 'idempotency_keys_path_valid'],
-    ['an empty key', { key: '' }, 'idempotency_keys_key_length'],
-    ['a key over 256 characters', { key: 'k'.repeat(257) }, 'idempotency_keys_key_length'],
-    ['an unknown state', { state: 'weird' as never }, 'idempotency_keys_state_valid'],
-  ])('rejects %s', async (_label, values, constraint) => {
+  describe('key', () => {
+    it.each([
+      ['one character', 'k'],
+      ['255 characters', 'k'.repeat(255)],
+      ['spaces and symbols', 'order 42/retry#1 (a+b)~'],
+    ])('accepts %s', async (_label, key) => {
+      await withLedger((trx, org, ledgerId) => insertIdempotencyKey(trx, org, ledgerId, { key }));
+    });
+
+    it.each([
+      ['an empty key', ''],
+      ['a key over 255 characters', 'k'.repeat(256)],
+      ['a key with a new line', 'k\nk'],
+      ['a key with a tab', 'k\tk'],
+      ['a key with a letter that is not ASCII', 'cl\u00e9'],
+    ])('rejects %s', async (_label, key) => {
+      await expect(
+        withLedger((trx, org, ledgerId) => insertIdempotencyKey(trx, org, ledgerId, { key })),
+      ).rejects.toMatchObject({ code: '23514', constraint: 'idempotency_keys_key_valid' });
+    });
+  });
+
+  it('rejects an expiry that is not after the creation', async () => {
     await expect(
-      withLedger((trx, org, ledgerId) => insertIdempotencyKey(trx, org, ledgerId, values)),
-    ).rejects.toMatchObject({ code: '23514', constraint });
+      withLedger((trx, org, ledgerId) =>
+        insertIdempotencyKey(trx, org, ledgerId, { expires_at: new Date(Date.now() - HOUR) }),
+      ),
+    ).rejects.toMatchObject({ code: '23514', constraint: 'idempotency_keys_expiry_after_created' });
   });
 
   it.each([16, 64])('rejects a request hash of %i bytes', async (size) => {
@@ -136,35 +101,68 @@ describe('idempotency_keys', () => {
     );
   });
 
-  it('lets the app complete a key and later delete it (cleanup of expired keys)', async () => {
+  describe('transaction_id', () => {
+    it('can be written before the transaction row, in the same database transaction', async () => {
+      // The use case claims the key first and saves the transaction after it.
+      await withLedger(async (trx, org, ledgerId) => {
+        const transactionId = randomUUIDv7();
+        await insertIdempotencyKey(trx, org, ledgerId, { transaction_id: transactionId });
+        await insertTransaction(trx, org, ledgerId, { id: transactionId });
+      });
+    });
+
+    it('fails the commit when the transaction row is never saved', async () => {
+      await expect(
+        withLedger((trx, org, ledgerId) =>
+          insertIdempotencyKey(trx, org, ledgerId, { transaction_id: randomUUIDv7() }),
+        ),
+      ).rejects.toMatchObject({ code: '23503' });
+    });
+
+    it('fails the commit when the transaction is in another ledger', async () => {
+      await expect(
+        withLedger(async (trx, org, ledgerId) => {
+          const other = await insertLedger(trx, org);
+          const otherTransactionId = await insertTransaction(trx, org, other.id);
+          await insertIdempotencyKey(trx, org, ledgerId, { transaction_id: otherTransactionId });
+        }),
+      ).rejects.toMatchObject({ code: '23503' });
+    });
+  });
+
+  it('lets the app replace an expired key and later delete it', async () => {
     const key = randomName('key');
 
-    const { deleted, state } = await withLedger(async (trx, org, ledgerId) => {
+    const { replaced, deleted } = await withLedger(async (trx, org, ledgerId) => {
       await insertIdempotencyKey(trx, org, ledgerId, { key });
+      const newTransactionId = await insertTransaction(trx, org, ledgerId);
       await trx
         .updateTable('idempotency_keys')
         .set({
-          state: 'completed',
-          response_status: 200,
-          response_body: {},
-          completed_at: sql<Date>`now()`,
-          lock_expires_at: null,
+          request_hash: sha256Like(9),
+          transaction_id: newTransactionId,
+          created_at: sql<Date>`now()`,
+          expires_at: new Date(Date.now() + HOUR),
         })
         .where('key', '=', key)
         .execute();
       const row = await trx
         .selectFrom('idempotency_keys')
-        .select('state')
+        .select(['request_hash', 'transaction_id'])
         .where('key', '=', key)
         .executeTakeFirstOrThrow();
       const result = await trx
         .deleteFrom('idempotency_keys')
         .where('key', '=', key)
         .executeTakeFirstOrThrow();
-      return { deleted: result.numDeletedRows, state: row.state };
+      return {
+        replaced: { hash: row.request_hash, transactionId: row.transaction_id, newTransactionId },
+        deleted: result.numDeletedRows,
+      };
     });
 
-    expect(state).toBe('completed');
+    expect(replaced.hash).toEqual(sha256Like(9));
+    expect(replaced.transactionId).toBe(replaced.newTransactionId);
     expect(deleted).toBe(1n);
   });
 });

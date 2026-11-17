@@ -13,6 +13,7 @@ import { CreateTransactionUseCase } from '../../application/use-cases/create-tra
 import { GetTransactionUseCase } from '../../application/use-cases/get-transaction.use-case.js';
 import { ListTransactionsUseCase } from '../../application/use-cases/list-transactions.use-case.js';
 import { InsufficientFundsError } from '../../../accounts/domain/errors/insufficient-funds.error.js';
+import { IdempotencyKeyReusedError } from '../../../idempotency/domain/errors/idempotency-key-reused.error.js';
 import { InvalidPostingError } from '../../domain/errors/invalid-posting.error.js';
 import { InvalidTransactionError } from '../../domain/errors/invalid-transaction.error.js';
 import { Posting } from '../../domain/value-objects/posting.vo.js';
@@ -59,8 +60,9 @@ describe('TransactionsController', () => {
     executeGet.mockReset();
     executeList.mockReset();
     // Builds a transaction from the input, like the real use case does.
-    execute.mockImplementation(async (input) =>
-      Transaction.create({
+    execute.mockImplementation(async (input) => ({
+      replayed: false,
+      transaction: Transaction.create({
         id: '0190a5d4-7b3c-7abc-8def-0123456789ab',
         organizationId: input.organizationId,
         ledgerId: '0190a5d4-7b3c-7abc-8def-0123456789ac',
@@ -75,7 +77,7 @@ describe('TransactionsController', () => {
         postedAt: new Date('2026-11-07T10:00:00.000Z'),
         createdAt: new Date('2026-11-07T10:00:01.000Z'),
       }),
-    );
+    }));
   });
 
   const validBody = {
@@ -125,6 +127,7 @@ describe('TransactionsController', () => {
         ledgerName: 'my-ledger',
         reference: 'order-1',
         postings: [{ source: 'world', destination: 'users:1', asset: 'USD', amount: 1050n }],
+        idempotencyKey: undefined,
       });
     });
 
@@ -136,6 +139,68 @@ describe('TransactionsController', () => {
 
       expect(res.body.postings[0].amount).toBe(amount);
       expect(execute.mock.calls[0]?.[0].postings[0]?.amount).toBe(10n ** 78n - 1n);
+    });
+  });
+
+  describe('Idempotency-Key', () => {
+    const withKey = (key: string) => post(validBody).set('Idempotency-Key', key);
+
+    it('gives the key to the use case', async () => {
+      await withKey('order 42/retry#1').expect(201);
+
+      expect(execute.mock.calls[0]?.[0].idempotencyKey).toBe('order 42/retry#1');
+    });
+
+    it('sends no Idempotent-Replayed header for a first call', async () => {
+      const res = await withKey('key-1').expect(201);
+
+      expect(res.headers['idempotent-replayed']).toBeUndefined();
+    });
+
+    it('answers a replay with 201, the same body and Location, and Idempotent-Replayed: true', async () => {
+      const first = await post(validBody).set('Idempotency-Key', 'key-1').expect(201);
+      const stored = await execute.mock.results[0]!.value;
+      execute.mockResolvedValueOnce({ ...stored, replayed: true });
+
+      const res = await withKey('key-1').expect(201);
+
+      expect(res.body).toEqual(first.body);
+      expect(res.headers.location).toBe(first.headers.location);
+      expect(res.headers['idempotent-replayed']).toBe('true');
+    });
+
+    it.each([
+      ['empty', ''],
+      ['over 255 characters', 'k'.repeat(256)],
+      ['not ASCII', 'cl\u00e9'],
+    ])(
+      'refuses a key that is %s with 400 VALIDATION, and never repeats it',
+      async (_label, key) => {
+        const res = await withKey(key).expect(400);
+
+        expect(res.body.errorCode).toBe('VALIDATION');
+        expect(res.body.details).toEqual([
+          { path: 'Idempotency-Key', message: 'Must be 1 to 255 printable ASCII characters' },
+        ]);
+        expect(JSON.stringify(res.body)).not.toContain('k'.repeat(256));
+        expect(execute).not.toHaveBeenCalled();
+      },
+    );
+
+    it('accepts a key of exactly 255 characters', async () => {
+      await withKey('k'.repeat(255)).expect(201);
+    });
+
+    it('turns IdempotencyKeyReusedError into 422 IDEMPOTENCY_KEY_REUSED', async () => {
+      const error = new IdempotencyKeyReusedError();
+      execute.mockRejectedValueOnce(error);
+
+      const res = await withKey('key-1').expect(422);
+
+      expect(res.body).toEqual({
+        errorCode: 'IDEMPOTENCY_KEY_REUSED',
+        errorMessage: error.message,
+      });
     });
   });
 

@@ -163,6 +163,122 @@ describe('transactions (e2e)', () => {
     expect(res.headers.location).toBe(`/ledgers/main/transactions/${res.body.id}`);
   });
 
+  describe('Idempotency-Key', () => {
+    const withKey = (organizationId: string, key: string, body: object, ledger = 'main') =>
+      createTransaction(organizationId, body, ledger).set('Idempotency-Key', key);
+
+    const balanceOf = async (organizationId: string, address: string) => {
+      const res = await request(app.getHttpServer())
+        .get(`/ledgers/main/accounts/${address}`)
+        .set(ORGANIZATION_ID_HEADER, organizationId)
+        .expect(200);
+      return res.body.balances.find((b: { asset: string }) => b.asset === 'USD').amount as string;
+    };
+
+    it('creates once and answers a repeat with the same body and Location, marked as a replay', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId);
+      const body = { reference: 'order-1', postings: [posting('world', 'users:1', '1050')] };
+
+      const first = await withKey(organizationId, 'key-1', body).expect(201);
+      const second = await withKey(organizationId, 'key-1', body).expect(201);
+
+      expect(first.headers['idempotent-replayed']).toBeUndefined();
+      expect(second.headers['idempotent-replayed']).toBe('true');
+      expect(second.headers.location).toBe(first.headers.location);
+      expect(second.body).toEqual(first.body);
+      expect(await balanceOf(organizationId, 'users:1')).toBe('1050');
+      const list = await listTransactions(organizationId).expect(200);
+      expect(list.body.data).toHaveLength(1);
+    });
+
+    it('returns 422 IDEMPOTENCY_KEY_REUSED when the key is used for another request', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId);
+      await withKey(organizationId, 'key-1', {
+        postings: [posting('world', 'users:1', '10')],
+      }).expect(201);
+
+      const res = await withKey(organizationId, 'key-1', {
+        postings: [posting('world', 'users:1', '11')],
+      }).expect(422);
+
+      expect(res.body.errorCode).toBe('IDEMPOTENCY_KEY_REUSED');
+      expect(await balanceOf(organizationId, 'users:1')).toBe('10');
+    });
+
+    it('lets the same key run again after a request that failed', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId);
+      const body = { postings: [posting('users:1', 'users:2', '5')] };
+      const failed = await withKey(organizationId, 'key-1', body).expect(422);
+      expect(failed.body.errorCode).toBe('INSUFFICIENT_FUNDS');
+      await createTransaction(organizationId, {
+        postings: [posting('world', 'users:1', '5')],
+      }).expect(201);
+
+      const retry = await withKey(organizationId, 'key-1', body).expect(201);
+
+      expect(retry.headers['idempotent-replayed']).toBeUndefined();
+      expect(await balanceOf(organizationId, 'users:2')).toBe('5');
+    });
+
+    it('works as before without the header', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId);
+      const body = { postings: [posting('world', 'users:1', '5')] };
+
+      const first = await createTransaction(organizationId, body).expect(201);
+      const second = await createTransaction(organizationId, body).expect(201);
+
+      expect(second.body.id).not.toBe(first.body.id);
+      expect(second.headers['idempotent-replayed']).toBeUndefined();
+      expect(await balanceOf(organizationId, 'users:1')).toBe('10');
+    });
+
+    it('returns 400 VALIDATION for a key that is empty or too long, and does not create anything', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId);
+      const body = { postings: [posting('world', 'users:1', '5')] };
+
+      for (const key of ['', 'k'.repeat(256)]) {
+        const res = await withKey(organizationId, key, body).expect(400);
+        expect(res.body.errorCode).toBe('VALIDATION');
+        expect(res.body.details).toEqual([expect.objectContaining({ path: 'Idempotency-Key' })]);
+      }
+      const list = await listTransactions(organizationId).expect(200);
+      expect(list.body.data).toHaveLength(0);
+    });
+
+    it('does not share a key between ledgers', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId);
+      await createLedger(organizationId, 'second');
+      const body = { postings: [posting('world', 'users:1', '5')] };
+
+      const a = await withKey(organizationId, 'key-1', body).expect(201);
+      const b = await withKey(organizationId, 'key-1', body, 'second').expect(201);
+
+      expect(b.body.id).not.toBe(a.body.id);
+      expect(b.headers['idempotent-replayed']).toBeUndefined();
+    });
+
+    it('creates one transaction for many requests with the same key at the same time', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId);
+      const body = { postings: [posting('world', 'users:1', '5')] };
+
+      const responses = await Promise.all(
+        Array.from({ length: 6 }, () => withKey(organizationId, 'key-1', body)),
+      );
+
+      expect(responses.map((r) => r.status)).toEqual(Array.from({ length: 6 }, () => 201));
+      expect(responses.filter((r) => r.headers['idempotent-replayed'] === 'true')).toHaveLength(5);
+      expect(new Set(responses.map((r) => r.body.id)).size).toBe(1);
+      expect(await balanceOf(organizationId, 'users:1')).toBe('5');
+    });
+  });
+
   describe('get', () => {
     it('gets a transaction, the same as the create response', async () => {
       const organizationId = randomUUIDv7();

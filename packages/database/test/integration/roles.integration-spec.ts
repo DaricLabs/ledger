@@ -17,7 +17,7 @@ interface ExpectedAccess {
   /** Table-level privileges `ledger_runtime` must have. */
   table: Privilege[];
   /** Columns `ledger_runtime` may UPDATE. `'all'` means every column. */
-  updatableColumns: string[] | 'all';
+  updatableColumns: string[];
 }
 
 const NO_ACCESS: ExpectedAccess = { table: [], updatableColumns: [] };
@@ -43,8 +43,11 @@ const EXPECTED_RUNTIME_ACCESS: Record<string, ExpectedAccess> = {
   postings: { table: READ_AND_ADD, updatableColumns: [] },
   ledger_logs: { table: READ_AND_ADD, updatableColumns: [] },
   ledger_audit_anchors: { table: READ_AND_ADD, updatableColumns: [] },
-  // Expired keys are cleaned up by the app.
-  idempotency_keys: { table: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'], updatableColumns: 'all' },
+  // An expired key is replaced by the next request, and the app deletes expired keys.
+  idempotency_keys: {
+    table: ['SELECT', 'INSERT', 'DELETE'],
+    updatableColumns: ['created_at', 'expires_at', 'request_hash', 'transaction_id'],
+  },
   // Migration bookkeeping belongs to the migrator only.
   kysely_migration: NO_ACCESS,
   kysely_migration_lock: NO_ACCESS,
@@ -160,13 +163,9 @@ describe('database roles and grants', () => {
         `.execute(runtime);
 
         const updatable = rows.filter((r) => r.can_update).map((r) => r.column_name);
-        const want =
-          expected.updatableColumns === 'all'
-            ? rows.map((r) => r.column_name)
-            : expected.updatableColumns;
 
         expect(rows.length).toBeGreaterThan(0);
-        expect(updatable.sort()).toEqual([...want].sort());
+        expect(updatable.sort()).toEqual([...expected.updatableColumns].sort());
       },
     );
   });

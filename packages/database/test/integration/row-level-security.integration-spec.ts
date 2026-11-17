@@ -143,7 +143,10 @@ describe('row-level security', () => {
       ledger_audit_anchors: (trx, b) =>
         insertAnchor(trx, b.organizationId, b.ledgerId, { from: 1, to: 1 }),
       outbox_events: (trx, b) => insertOutboxEvent(trx, b.organizationId, b.ledgerId),
-      idempotency_keys: (trx, b) => insertIdempotencyKey(trx, b.organizationId, b.ledgerId),
+      idempotency_keys: (trx, b) =>
+        insertIdempotencyKey(trx, b.organizationId, b.ledgerId, {
+          transaction_id: b.transactionId,
+        }),
     };
 
     it.each(TENANT_TABLES.filter((t) => t !== 'balances'))(
