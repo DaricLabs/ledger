@@ -39,3 +39,33 @@ describe('Posting.of', () => {
     expect(error?.message).not.toContain('users:1');
   });
 });
+
+describe('Posting.reversed', () => {
+  it('sends the same money back: source and destination swap places', () => {
+    const posting = Posting.of(a, b, Money.of(usd, 150n));
+
+    const reversed = posting.reversed();
+
+    expect(reversed.source).toBe(b);
+    expect(reversed.destination).toBe(a);
+    expect(reversed.money).toBe(posting.money);
+  });
+
+  it('does not change the posting', () => {
+    const posting = Posting.of(a, b, Money.of(usd, 150n));
+
+    posting.reversed();
+
+    expect(posting.source).toBe(a);
+    expect(posting.destination).toBe(b);
+  });
+
+  it('gives the original again when it is reversed twice', () => {
+    const posting = Posting.of(a, b, Money.of(usd, 150n));
+
+    const twice = posting.reversed().reversed();
+
+    expect(twice.source).toBe(a);
+    expect(twice.destination).toBe(b);
+  });
+});

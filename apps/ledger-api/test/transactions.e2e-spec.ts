@@ -68,6 +68,8 @@ describe('transactions (e2e)', () => {
       postings: [{ source: 'world', destination: 'users:1', asset: 'USD', amount: '1050' }],
       postedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/),
       createdAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/),
+      revertedAt: null,
+      revertedByTransactionId: null,
     });
   });
 
@@ -479,6 +481,209 @@ describe('transactions (e2e)', () => {
       const res = await listTransactions(randomUUIDv7(), '?cursor=hello').expect(400);
 
       expect(res.body.errorCode).toBe('VALIDATION');
+    });
+  });
+
+  describe('revert', () => {
+    const revertTransaction = (organizationId: string, id: string, ledger = 'main') =>
+      request(app.getHttpServer())
+        .post(`/ledgers/${ledger}/transactions/${id}/revert`)
+        .set(ORGANIZATION_ID_HEADER, organizationId);
+
+    const getAccount = (organizationId: string, address: string) =>
+      request(app.getHttpServer())
+        .get(`/ledgers/main/accounts/${address}`)
+        .set(ORGANIZATION_ID_HEADER, organizationId);
+
+    /** Creates a ledger and one transaction (1000 from world to users:1), and returns the ids. */
+    const prepare = async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId);
+      const created = await createTransaction(organizationId, {
+        reference: 'order-1',
+        postings: [posting('world', 'users:1', '1000')],
+      }).expect(201);
+      return { organizationId, id: created.body.id as string };
+    };
+
+    it('makes a new transaction that moves the money back', async () => {
+      const { organizationId, id } = await prepare();
+
+      const res = await revertTransaction(organizationId, id).expect(201);
+
+      expect(res.body).toEqual({
+        id: expect.not.stringMatching(id),
+        reference: null,
+        postings: [{ source: 'users:1', destination: 'world', asset: 'USD', amount: '1000' }],
+        postedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/),
+        createdAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/),
+        revertedAt: null,
+        revertedByTransactionId: null,
+      });
+      const account = await getAccount(organizationId, 'users:1').expect(200);
+      expect(account.body.balances).toEqual([{ asset: 'USD', amount: '0' }]);
+    });
+
+    it('sends the Location of the new transaction, and the old one shows the revert', async () => {
+      const { organizationId, id } = await prepare();
+
+      const res = await revertTransaction(organizationId, id).expect(201);
+
+      expect(res.headers.location).toBe(`/ledgers/main/transactions/${res.body.id}`);
+      const old = await getTransaction(organizationId, id).expect(200);
+      expect(old.body.revertedByTransactionId).toBe(res.body.id);
+      expect(old.body.revertedAt).toBe(res.body.createdAt);
+      const next = await request(app.getHttpServer())
+        .get(res.headers.location as string)
+        .set(ORGANIZATION_ID_HEADER, organizationId)
+        .expect(200);
+      expect(next.body).toEqual(res.body);
+    });
+
+    it('shows the revert in the list', async () => {
+      const { organizationId, id } = await prepare();
+      const res = await revertTransaction(organizationId, id).expect(201);
+
+      const list = await listTransactions(organizationId).expect(200);
+
+      expect(list.body.data.map((t: { id: string }) => t.id)).toEqual([res.body.id, id]);
+      expect(list.body.data[1].revertedByTransactionId).toBe(res.body.id);
+    });
+
+    it('returns 409 TRANSACTION_ALREADY_REVERTED for a second revert', async () => {
+      const { organizationId, id } = await prepare();
+      await revertTransaction(organizationId, id).expect(201);
+
+      const res = await revertTransaction(organizationId, id).expect(409);
+
+      expect(res.body.errorCode).toBe('TRANSACTION_ALREADY_REVERTED');
+      const list = await listTransactions(organizationId).expect(200);
+      expect(list.body.data).toHaveLength(2);
+    });
+
+    it('returns 422 INSUFFICIENT_FUNDS when the money was spent, and changes nothing', async () => {
+      const { organizationId, id } = await prepare();
+      await createTransaction(organizationId, {
+        postings: [posting('users:1', 'users:2', '900')],
+      }).expect(201);
+
+      const res = await revertTransaction(organizationId, id).expect(422);
+
+      expect(res.body.errorCode).toBe('INSUFFICIENT_FUNDS');
+      const old = await getTransaction(organizationId, id).expect(200);
+      expect(old.body.revertedAt).toBeNull();
+      const account = await getAccount(organizationId, 'users:1').expect(200);
+      expect(account.body.balances).toEqual([{ asset: 'USD', amount: '100' }]);
+    });
+
+    it('returns 404 TRANSACTION_NOT_FOUND for an id that does not exist', async () => {
+      const { organizationId } = await prepare();
+
+      const res = await revertTransaction(organizationId, randomUUIDv7()).expect(404);
+
+      expect(res.body.errorCode).toBe('TRANSACTION_NOT_FOUND');
+    });
+
+    it('returns 404 LEDGER_NOT_FOUND for a ledger that does not exist', async () => {
+      const { organizationId, id } = await prepare();
+
+      const res = await revertTransaction(organizationId, id, 'missing').expect(404);
+
+      expect(res.body.errorCode).toBe('LEDGER_NOT_FOUND');
+    });
+
+    it('returns 404 for the transaction of another organization', async () => {
+      const { id } = await prepare();
+      const other = randomUUIDv7();
+      await createLedger(other);
+
+      const res = await revertTransaction(other, id).expect(404);
+
+      expect(res.body.errorCode).toBe('TRANSACTION_NOT_FOUND');
+    });
+
+    it('returns 400 VALIDATION for an id that is not a UUIDv7', async () => {
+      const { organizationId } = await prepare();
+
+      const res = await revertTransaction(organizationId, 'abc').expect(400);
+
+      expect(res.body.errorCode).toBe('VALIDATION');
+    });
+
+    describe('Idempotency-Key', () => {
+      it('reverts once and answers a repeat with the same body and Location, marked as a replay', async () => {
+        const { organizationId, id } = await prepare();
+
+        const first = await revertTransaction(organizationId, id)
+          .set('Idempotency-Key', 'key-1')
+          .expect(201);
+        const second = await revertTransaction(organizationId, id)
+          .set('Idempotency-Key', 'key-1')
+          .expect(201);
+
+        expect(first.headers['idempotent-replayed']).toBeUndefined();
+        expect(second.headers['idempotent-replayed']).toBe('true');
+        expect(second.body).toEqual(first.body);
+        expect(second.headers.location).toBe(first.headers.location);
+        const list = await listTransactions(organizationId).expect(200);
+        expect(list.body.data).toHaveLength(2);
+      });
+
+      it('answers a replay with the body of the first call, even after the transaction was reverted', async () => {
+        const { organizationId, id } = await prepare();
+        const first = await revertTransaction(organizationId, id)
+          .set('Idempotency-Key', 'key-1')
+          .expect(201);
+        await revertTransaction(organizationId, first.body.id).expect(201); // reverts the revert
+
+        const replay = await revertTransaction(organizationId, id)
+          .set('Idempotency-Key', 'key-1')
+          .expect(201);
+
+        expect(replay.headers['idempotent-replayed']).toBe('true');
+        expect(replay.body).toEqual(first.body);
+        const current = await getTransaction(organizationId, first.body.id).expect(200);
+        expect(current.body.revertedByTransactionId).not.toBeNull();
+      });
+
+      it('returns 422 IDEMPOTENCY_KEY_REUSED when the key is used for another transaction', async () => {
+        const { organizationId, id } = await prepare();
+        const other = await createTransaction(organizationId, {
+          postings: [posting('world', 'users:3', '5')],
+        }).expect(201);
+        await revertTransaction(organizationId, id).set('Idempotency-Key', 'key-1').expect(201);
+
+        const res = await revertTransaction(organizationId, other.body.id)
+          .set('Idempotency-Key', 'key-1')
+          .expect(422);
+
+        expect(res.body.errorCode).toBe('IDEMPOTENCY_KEY_REUSED');
+      });
+
+      it('returns 400 VALIDATION for a key that is too long', async () => {
+        const { organizationId, id } = await prepare();
+
+        const res = await revertTransaction(organizationId, id)
+          .set('Idempotency-Key', 'k'.repeat(256))
+          .expect(400);
+
+        expect(res.body.errorCode).toBe('VALIDATION');
+      });
+
+      it('reverts once for many requests with the same key at the same time', async () => {
+        const { organizationId, id } = await prepare();
+
+        const responses = await Promise.all(
+          Array.from({ length: 6 }, () =>
+            revertTransaction(organizationId, id).set('Idempotency-Key', 'key-1'),
+          ),
+        );
+
+        expect(responses.map((r) => r.status)).toEqual(Array(6).fill(201));
+        expect(new Set(responses.map((r) => r.body.id)).size).toBe(1);
+        const list = await listTransactions(organizationId).expect(200);
+        expect(list.body.data).toHaveLength(2);
+      });
     });
   });
 });

@@ -21,6 +21,7 @@ import { ledgerNameSchema } from '../../../ledgers/presentation/dto/ledger-name.
 import { CreateTransactionUseCase } from '../../application/use-cases/create-transaction.use-case.js';
 import { GetTransactionUseCase } from '../../application/use-cases/get-transaction.use-case.js';
 import { ListTransactionsUseCase } from '../../application/use-cases/list-transactions.use-case.js';
+import { RevertTransactionUseCase } from '../../application/use-cases/revert-transaction.use-case.js';
 import {
   createTransactionSchema,
   type CreateTransactionDto,
@@ -40,6 +41,7 @@ import { TransactionExceptionFilter } from '../filters/transaction-exception.fil
 
 const LEDGERS_PATH = 'ledgers';
 const TRANSACTIONS_PATH = 'transactions';
+const REVERT_PATH = 'revert';
 
 /**
  * HTTP entry of the transactions feature. It only reads the request, calls a
@@ -67,6 +69,7 @@ export class TransactionsController {
     private readonly createTransaction: CreateTransactionUseCase,
     private readonly getTransaction: GetTransactionUseCase,
     private readonly listTransactions: ListTransactionsUseCase,
+    private readonly revertTransaction: RevertTransactionUseCase,
   ) {}
 
   /**
@@ -179,6 +182,60 @@ export class TransactionsController {
       ledgerName,
       transactionId,
     });
+    return toTransactionResponseDto(transaction);
+  }
+
+  /**
+   * Reverts a transaction of a ledger of the organization of the
+   * `X-Organization-Id` header: makes a new transaction that moves the same
+   * money back (every posting goes the other way, in the opposite order), and
+   * marks the old one as reverted. The old transaction is not changed
+   * otherwise. The request has no body.
+   *
+   * The response is the NEW transaction, in the same shape as the one of the
+   * create call. Its `Location` header is its URL. It has no reference and
+   * `postedAt` is the time of the revert. The old transaction now shows
+   * `revertedAt` and `revertedByTransactionId`.
+   *
+   * The money must still be there. If an account spent it after the original
+   * transaction, the revert fails with `INSUFFICIENT_FUNDS`, and nothing is
+   * forced: an account never goes below zero (only `world` may).
+   *
+   * **Safe to repeat.** Send an `Idempotency-Key` header, like on create. A
+   * repeat answers like the first call: `201`, the same body and `Location`,
+   * plus `Idempotent-Replayed: true`. Without a key, a second revert of the
+   * same transaction is refused with `TRANSACTION_ALREADY_REVERTED`.
+   *
+   * - `201`: the transaction was reverted (or, with `Idempotent-Replayed:
+   *   true`, it was reverted by an earlier call with the same key).
+   * - `400`: `VALIDATION` (the ledger name or the id has a wrong shape, or a
+   *   bad `Idempotency-Key`).
+   * - `404`: `LEDGER_NOT_FOUND` (no such ledger in this organization) or
+   *   `TRANSACTION_NOT_FOUND` (no such transaction in this ledger).
+   * - `409`: `TRANSACTION_ALREADY_REVERTED`.
+   * - `422`: `INSUFFICIENT_FUNDS` (an account does not have the money to give
+   *   back) or `IDEMPOTENCY_KEY_REUSED` (the key was used for a different
+   *   request).
+   */
+  @Post(`:transactionId/${REVERT_PATH}`)
+  async revert(
+    @OrganizationId() organizationId: string,
+    @Param('ledgerName', { schema: ledgerNameSchema }) ledgerName: string,
+    @Param('transactionId', { schema: transactionIdSchema }) transactionId: string,
+    @IdempotencyKey() idempotencyKey: string | undefined,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<ITransactionResponse> {
+    const { transaction, replayed } = await this.revertTransaction.execute({
+      organizationId,
+      ledgerName,
+      transactionId,
+      idempotencyKey,
+    });
+    // The location is the NEW transaction, not the one in the URL.
+    response.location(`/${LEDGERS_PATH}/${ledgerName}/${TRANSACTIONS_PATH}/${transaction.id}`);
+    if (replayed) {
+      response.setHeader(IDEMPOTENT_REPLAYED_HEADER, 'true');
+    }
     return toTransactionResponseDto(transaction);
   }
 }

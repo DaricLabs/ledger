@@ -96,6 +96,8 @@ function setup(held: Held = {}) {
       calls.push('insert');
     }),
     findById: vi.fn<ITransactionRepository['findById']>(),
+    lockById: vi.fn<ITransactionRepository['lockById']>(),
+    markReverted: vi.fn<ITransactionRepository['markReverted']>(),
     findPage: vi.fn<ITransactionRepository['findPage']>(),
   };
   const logs = {
@@ -388,6 +390,36 @@ describe('CreateTransactionUseCase', () => {
       expect(transactionRepository.insert).not.toHaveBeenCalled();
       expect(logs.append).not.toHaveBeenCalled();
       expect(outbox.append).not.toHaveBeenCalled();
+    });
+
+    it('answers a replay with the transaction as it was created, even if it was reverted since', async () => {
+      const { useCase, idempotencyKeys, transactionRepository } = setup();
+      const reverted = Transaction.reconstitute({
+        id: '0190a5d4-7b3c-7abc-8def-0123456789b1',
+        organizationId: ORG_ID,
+        ledgerId: LEDGER_ID,
+        reference: null,
+        postings: [
+          Posting.of(
+            AccountAddress.of('world'),
+            AccountAddress.of('users:1'),
+            Money.of(AssetCode.of('USD'), 5n),
+          ),
+        ],
+        postedAt: new Date('2026-11-16T10:00:00.000Z'),
+        createdAt: new Date('2026-11-16T10:00:00.000Z'),
+        revertedAt: new Date('2026-11-16T11:00:00.000Z'),
+        revertedByTransactionId: '0190a5d4-7b3c-7abc-8def-0123456789b2',
+      });
+      idempotencyKeys.claim.mockResolvedValueOnce({ replayed: true, transactionId: reverted.id });
+      transactionRepository.findById.mockResolvedValueOnce(reverted);
+
+      const { transaction, replayed } = await useCase.execute(keyed);
+
+      expect(replayed).toBe(true);
+      expect(transaction.id).toBe(reverted.id);
+      expect(transaction.isReverted).toBe(false);
+      expect(transaction.revertedAt).toBeNull();
     });
 
     it('passes IdempotencyKeyReusedError through and writes nothing', async () => {

@@ -2,6 +2,7 @@ import { DomainError } from '@ledger/domain';
 import { InvalidPostingError } from './invalid-posting.error.js';
 import { InvalidTransactionError } from './invalid-transaction.error.js';
 import { TransactionDomainError } from './transaction-domain.error.js';
+import { TransactionAlreadyRevertedError } from './transaction-already-reverted.error.js';
 import { TransactionNotFoundError } from './transaction-not-found.error.js';
 import { TransactionReferenceAlreadyExistsError } from './transaction-reference-already-exists.error.js';
 
@@ -13,6 +14,11 @@ const transactionErrors: [string, () => TransactionDomainError, string][] = [
     'InvalidTransactionError',
     () => new InvalidTransactionError('bad transaction'),
     'INVALID_TRANSACTION',
+  ],
+  [
+    'TransactionAlreadyRevertedError',
+    () => new TransactionAlreadyRevertedError('0190a1b2-0000-7000-8000-000000000001'),
+    'TRANSACTION_ALREADY_REVERTED',
   ],
   [
     'TransactionNotFoundError',
@@ -54,5 +60,9 @@ describe('transaction errors', () => {
     expect(notFound.message).not.toContain(notFound.transactionId);
     expect(duplicate.reference).toBe('order-42');
     expect(duplicate.message).not.toContain('order-42');
+
+    const reverted = new TransactionAlreadyRevertedError('0190a1b2-0000-7000-8000-000000000001');
+    expect(reverted.transactionId).toBe('0190a1b2-0000-7000-8000-000000000001');
+    expect(reverted.message).not.toContain(reverted.transactionId);
   });
 });

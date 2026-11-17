@@ -40,6 +40,8 @@ const storedPage: ITransactionPage = {
       ],
       postedAt: new Date('2026-11-08T10:00:00.000Z'),
       createdAt: new Date('2026-11-08T10:00:01.000Z'),
+      revertedAt: null,
+      revertedByTransactionId: null,
     }),
   ],
   hasMore: true,
@@ -73,6 +75,8 @@ function setup() {
   const transactionRepository = {
     insert: vi.fn<ITransactionRepository['insert']>(),
     findById: vi.fn<ITransactionRepository['findById']>(),
+    lockById: vi.fn<ITransactionRepository['lockById']>(),
+    markReverted: vi.fn<ITransactionRepository['markReverted']>(),
     findPage: vi.fn<ITransactionRepository['findPage']>(async () => {
       calls.push('find page');
       return storedPage;

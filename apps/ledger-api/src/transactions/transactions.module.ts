@@ -8,11 +8,12 @@ import { TRANSACTION_REPOSITORY } from './application/ports/transaction-reposito
 import { CreateTransactionUseCase } from './application/use-cases/create-transaction.use-case.js';
 import { GetTransactionUseCase } from './application/use-cases/get-transaction.use-case.js';
 import { ListTransactionsUseCase } from './application/use-cases/list-transactions.use-case.js';
+import { RevertTransactionUseCase } from './application/use-cases/revert-transaction.use-case.js';
 import { KyselyTransactionRepository } from './infrastructure/repositories/kysely-transaction.repository.js';
 import { TransactionsController } from './presentation/controllers/transactions.controller.js';
 
 /**
- * Moves money between accounts.
+ * Moves money between accounts, and takes it back (revert).
  *
  * A transaction belongs to a ledger, so this feature imports `LedgersModule`
  * to find a ledger by its name (`LEDGER_REPOSITORY`). It imports
@@ -29,7 +30,13 @@ import { TransactionsController } from './presentation/controllers/transactions.
     CreateTransactionUseCase,
     GetTransactionUseCase,
     ListTransactionsUseCase,
+    RevertTransactionUseCase,
   ],
-  exports: [CreateTransactionUseCase, GetTransactionUseCase, ListTransactionsUseCase],
+  exports: [
+    CreateTransactionUseCase,
+    GetTransactionUseCase,
+    ListTransactionsUseCase,
+    RevertTransactionUseCase,
+  ],
 })
 export class TransactionsModule {}

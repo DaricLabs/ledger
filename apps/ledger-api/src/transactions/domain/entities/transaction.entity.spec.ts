@@ -5,6 +5,7 @@ import {
 } from '../../../accounts/domain/entities/account-balance.entity.js';
 import { InsufficientFundsError } from '../../../accounts/domain/errors/insufficient-funds.error.js';
 import { InvalidTransactionError } from '../errors/invalid-transaction.error.js';
+import { TransactionAlreadyRevertedError } from '../errors/transaction-already-reverted.error.js';
 import { Posting } from '../value-objects/posting.vo.js';
 import {
   TRANSACTION_MAX_POSTINGS,
@@ -25,6 +26,8 @@ const props = (overrides: Partial<ITransactionProps> = {}): ITransactionProps =>
   postings: [posting('world', 'a', 100n)],
   postedAt: new Date('2026-11-07T10:00:00.000Z'),
   createdAt: new Date('2026-11-07T10:00:01.000Z'),
+  revertedAt: null,
+  revertedByTransactionId: null,
   ...overrides,
 });
 
@@ -252,5 +255,191 @@ describe('Transaction.applyTo', () => {
     expect(() => transaction.applyTo([held('world', 0n)])).toThrow(
       'Balance of "a" in "USD" was not loaded',
     );
+  });
+});
+
+describe('revert state', () => {
+  it('is not reverted when it is new', () => {
+    const transaction = Transaction.create(props());
+
+    expect(transaction.isReverted).toBe(false);
+    expect(transaction.revertedAt).toBeNull();
+    expect(transaction.revertedByTransactionId).toBeNull();
+  });
+
+  it('keeps the revert data it was rebuilt with', () => {
+    const transaction = Transaction.reconstitute(
+      props({
+        revertedAt: new Date('2026-11-08T10:00:00.000Z'),
+        revertedByTransactionId: '0190a5d4-7b3c-7abc-8def-0123456789ae',
+      }),
+    );
+
+    expect(transaction.isReverted).toBe(true);
+    expect(transaction.revertedAt).toEqual(new Date('2026-11-08T10:00:00.000Z'));
+    expect(transaction.revertedByTransactionId).toBe('0190a5d4-7b3c-7abc-8def-0123456789ae');
+  });
+
+  it('gives a new date each time, so the revert time cannot be changed from outside', () => {
+    const transaction = Transaction.reconstitute(
+      props({
+        revertedAt: new Date('2026-11-08T10:00:00.000Z'),
+        revertedByTransactionId: '0190a5d4-7b3c-7abc-8def-0123456789ae',
+      }),
+    );
+
+    transaction.revertedAt?.setFullYear(2000);
+
+    expect(transaction.revertedAt).toEqual(new Date('2026-11-08T10:00:00.000Z'));
+  });
+});
+
+describe('Transaction.reverse', () => {
+  const REVERSAL_ID = '0190a5d4-7b3c-7abc-8def-0123456789ae';
+  const at = new Date('2026-11-08T12:00:00.000Z');
+
+  const original = () =>
+    Transaction.create(
+      props({
+        reference: 'order-1',
+        postings: [posting('world', 'a', 100n), posting('a', 'b', 40n), posting('a', 'c', 10n)],
+      }),
+    );
+
+  it('makes a new transaction in the same ledger and organization, with the given id and time', () => {
+    const reversal = original().reverse({ id: REVERSAL_ID, at });
+
+    expect(reversal.id).toBe(REVERSAL_ID);
+    expect(reversal.organizationId).toBe('0190a5d4-7b3c-7abc-8def-0123456789ac');
+    expect(reversal.ledgerId).toBe('0190a5d4-7b3c-7abc-8def-0123456789ad');
+    expect(reversal.postedAt).toEqual(at);
+    expect(reversal.createdAt).toEqual(at);
+  });
+
+  it('turns every posting around and puts them in the opposite order', () => {
+    const reversal = original().reverse({ id: REVERSAL_ID, at });
+
+    expect(
+      reversal.postings.map((p) => [p.source.value, p.destination.value, p.money.amount]),
+    ).toEqual([
+      ['c', 'a', 10n],
+      ['b', 'a', 40n],
+      ['a', 'world', 100n],
+    ]);
+  });
+
+  it('has no reference, and is not reverted', () => {
+    const reversal = original().reverse({ id: REVERSAL_ID, at });
+
+    expect(reversal.reference).toBeNull();
+    expect(reversal.isReverted).toBe(false);
+  });
+
+  it('does not change the original', () => {
+    const transaction = original();
+
+    transaction.reverse({ id: REVERSAL_ID, at });
+
+    expect(transaction.isReverted).toBe(false);
+    expect(transaction.reference).toBe('order-1');
+    expect(transaction.postings.map((p) => p.source.value)).toEqual(['world', 'a', 'a']);
+  });
+
+  it('refuses a transaction that was reverted before', () => {
+    const transaction = Transaction.reconstitute(
+      props({
+        revertedAt: new Date('2026-11-08T10:00:00.000Z'),
+        revertedByTransactionId: '0190a5d4-7b3c-7abc-8def-0123456789af',
+      }),
+    );
+
+    expect(() => transaction.reverse({ id: REVERSAL_ID, at })).toThrow(
+      TransactionAlreadyRevertedError,
+    );
+  });
+
+  it('can be reverted again: a revert is a transaction like any other', () => {
+    const reversal = original().reverse({ id: REVERSAL_ID, at });
+
+    const again = reversal.reverse({ id: '0190a5d4-7b3c-7abc-8def-0123456789b0', at });
+
+    expect(again.postings.map((p) => [p.source.value, p.destination.value])).toEqual([
+      ['world', 'a'],
+      ['a', 'b'],
+      ['a', 'c'],
+    ]);
+  });
+
+  it('puts every balance back to where it was, when applied after the original', () => {
+    const transaction = original();
+    const afterOriginal = transaction.applyTo([
+      held('world', 0n),
+      held('a', 0n),
+      held('b', 0n),
+      held('c', 0n),
+    ]);
+
+    const afterReversal = transaction.reverse({ id: REVERSAL_ID, at }).applyTo(afterOriginal);
+
+    expect(afterReversal.map((b) => [b.key.address.value, b.balance.amount])).toEqual([
+      ['a', 0n],
+      ['b', 0n],
+      ['c', 0n],
+      ['world', 0n],
+    ]);
+  });
+
+  it('undoes a chain of postings where the middle account ends at zero', () => {
+    // a pays b, and b pays c with the same money: b ends at zero.
+    const chain = Transaction.create(
+      props({ postings: [posting('a', 'b', 50n), posting('b', 'c', 50n)] }),
+    );
+    const afterChain = chain.applyTo([held('a', 50n), held('b', 0n), held('c', 0n)]);
+
+    const reversal = chain.reverse({ id: REVERSAL_ID, at });
+
+    expect(() => reversal.applyTo(afterChain)).not.toThrow();
+  });
+
+  it('fails with InsufficientFundsError when the money was spent after the original', () => {
+    const transaction = Transaction.create(props({ postings: [posting('world', 'a', 100n)] }));
+    // `a` got 100 and then paid 70 away: it cannot give 100 back.
+    const reversal = transaction.reverse({ id: REVERSAL_ID, at });
+
+    expect(() => reversal.applyTo([held('a', 30n), held('world', -100n)])).toThrow(
+      InsufficientFundsError,
+    );
+  });
+});
+
+describe('Transaction.asCreated', () => {
+  const reverted = () =>
+    Transaction.reconstitute(
+      props({
+        reference: 'order-1',
+        revertedAt: new Date('2026-11-08T10:00:00.000Z'),
+        revertedByTransactionId: '0190a5d4-7b3c-7abc-8def-0123456789ae',
+      }),
+    );
+
+  it('clears the revert state and keeps everything else', () => {
+    const created = reverted().asCreated();
+
+    expect(created.isReverted).toBe(false);
+    expect(created.revertedAt).toBeNull();
+    expect(created.revertedByTransactionId).toBeNull();
+    expect(created.id).toBe(reverted().id);
+    expect(created.reference).toBe('order-1');
+    expect(created.postings).toEqual(reverted().postings);
+    expect(created.postedAt).toEqual(reverted().postedAt);
+    expect(created.createdAt).toEqual(reverted().createdAt);
+  });
+
+  it('does not change the transaction it is called on', () => {
+    const transaction = reverted();
+
+    transaction.asCreated();
+
+    expect(transaction.isReverted).toBe(true);
   });
 });

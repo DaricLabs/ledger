@@ -26,6 +26,10 @@ export interface ITransactionResponse {
   postedAt: string;
   /** When the ledger saved it. ISO 8601 date in UTC. */
   createdAt: string;
+  /** When the transaction was reverted. ISO 8601 date in UTC, or `null` if it was not reverted. */
+  revertedAt: string | null;
+  /** The id of the transaction that reverted this one, or `null` if it was not reverted. */
+  revertedByTransactionId: string | null;
 }
 
 function toPostingResponseDto(posting: Posting): IPostingResponse {
@@ -44,6 +48,8 @@ export function toTransactionResponseDto(transaction: Transaction): ITransaction
     postings: transaction.postings.map(toPostingResponseDto),
     postedAt: transaction.postedAt.toISOString(),
     createdAt: transaction.createdAt.toISOString(),
+    revertedAt: transaction.revertedAt?.toISOString() ?? null,
+    revertedByTransactionId: transaction.revertedByTransactionId,
   };
 }
 

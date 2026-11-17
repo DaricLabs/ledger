@@ -56,4 +56,18 @@ export class Posting {
   get asset(): AssetCode {
     return this.props.money.asset;
   }
+
+  /**
+   * The posting that undoes this one: the same amount goes back, from the
+   * destination to the source. This posting is not changed.
+   */
+  reversed(): Posting {
+    return new Posting(
+      Object.freeze({
+        source: this.props.destination,
+        destination: this.props.source,
+        money: this.props.money,
+      }),
+    );
+  }
 }
