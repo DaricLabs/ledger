@@ -327,10 +327,12 @@ describe('TransactionsModule (real database)', () => {
 
     it('replays a request even when the postings would fail now', async () => {
       const { organizationId } = await setup();
-      const first = await keyed(organizationId, 'key-1', [posting('world', 'users:1', 10n)]);
-      await move(organizationId, [posting('users:1', 'users:2', 10n)]); // users:1 is empty now
+      await move(organizationId, [posting('world', 'users:1', 10n)]);
+      // This empties users:1. Without a replay, the same request would now fail
+      // with InsufficientFundsError (users:1 may not go below zero).
+      const first = await keyed(organizationId, 'key-1', [posting('users:1', 'users:2', 10n)]);
 
-      const again = await keyed(organizationId, 'key-1', [posting('world', 'users:1', 10n)]);
+      const again = await keyed(organizationId, 'key-1', [posting('users:1', 'users:2', 10n)]);
 
       expect(again.replayed).toBe(true);
       expect(again.transaction.id).toBe(first.transaction.id);

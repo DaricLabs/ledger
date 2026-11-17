@@ -130,7 +130,10 @@ export class CreateTransactionUseCase {
   ) {}
 
   async execute(input: ICreateTransactionInput): Promise<ICreateTransactionResult> {
-    // Checked first, because it needs no database.
+    // Checked first, because it needs no database. The reference is read once,
+    // here, before any `await`: the hash and the transaction must use the same
+    // value, even if the caller changes `input` while we wait for the database.
+    const reference = input.reference ?? null;
     const postings = input.postings.map(toPosting);
     const idempotency =
       input.idempotencyKey === undefined
@@ -138,7 +141,10 @@ export class CreateTransactionUseCase {
         : {
             operation: TRANSACTION_OPERATION.CREATE,
             key: input.idempotencyKey,
-            requestHash: toCreateTransactionRequestHash(input),
+            requestHash: toCreateTransactionRequestHash({
+              reference,
+              postings: input.postings,
+            }),
           };
 
     return this.transactions.run(input.organizationId, async (trx) => {
@@ -167,7 +173,7 @@ export class CreateTransactionUseCase {
         id: transactionId,
         organizationId: input.organizationId,
         ledgerId: ledger.id,
-        reference: input.reference ?? null,
+        reference,
         postings,
         postedAt: now,
         createdAt: now,

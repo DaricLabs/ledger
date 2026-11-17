@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 
 /** The parts of a create request that make it the same request or another one. */
 export interface ICreateTransactionRequestFingerprint {
-  reference?: string;
+  reference?: string | null;
   postings: readonly {
     source: string;
     destination: string;
