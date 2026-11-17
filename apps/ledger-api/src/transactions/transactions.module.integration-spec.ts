@@ -1019,6 +1019,49 @@ describe('TransactionsModule (real database)', () => {
         expect(two.transaction.id).toBe(one.transaction.id);
       });
 
+      it('answers a replay like the first call, even after the new transaction was reverted', async () => {
+        const { organizationId } = await setup();
+        const first = await original(organizationId);
+        const one = await revert(organizationId, first.id, 'key-1');
+        await revert(organizationId, one.transaction.id); // reverts the revert
+
+        const two = await revert(organizationId, first.id, 'key-1');
+
+        expect(two.replayed).toBe(true);
+        expect(two.transaction.id).toBe(one.transaction.id);
+        expect(two.transaction.isReverted).toBe(false);
+        expect(two.transaction.revertedAt).toBeNull();
+      });
+
+      it('answers a create replay like the first call, even after the transaction was reverted', async () => {
+        const { organizationId } = await setup();
+        const created = await createTransaction.execute({
+          organizationId,
+          ledgerName: 'main',
+          postings: [posting('world', 'a', 5n)],
+          idempotencyKey: 'create-key',
+        });
+        await revert(organizationId, created.transaction.id);
+
+        const replay = await createTransaction.execute({
+          organizationId,
+          ledgerName: 'main',
+          postings: [posting('world', 'a', 5n)],
+          idempotencyKey: 'create-key',
+        });
+
+        expect(replay.replayed).toBe(true);
+        expect(replay.transaction.id).toBe(created.transaction.id);
+        expect(replay.transaction.isReverted).toBe(false);
+        // Reading it normally still shows the revert.
+        const read = await getTransaction.execute({
+          organizationId,
+          ledgerName: 'main',
+          transactionId: created.transaction.id,
+        });
+        expect(read.isReverted).toBe(true);
+      });
+
       it('does not share a key with create: the key is scoped by operation', async () => {
         const { organizationId } = await setup();
         const { transaction: created } = await createTransaction.execute({

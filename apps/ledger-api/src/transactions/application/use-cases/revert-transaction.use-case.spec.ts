@@ -437,6 +437,32 @@ describe('RevertTransactionUseCase', () => {
       expect(outbox.append).not.toHaveBeenCalled();
     });
 
+    it('answers a replay with the new transaction as it was created, even if it was reverted since', async () => {
+      const { useCase, idempotencyKeys, transactionRepository } = setup();
+      const first = original().reverse({
+        id: '0190a5d4-7b3c-7abc-8def-0123456789b0',
+        at: new Date('2026-11-16T12:00:00.000Z'),
+      });
+      const revertedSince = Transaction.reconstitute({
+        id: first.id,
+        organizationId: first.organizationId,
+        ledgerId: first.ledgerId,
+        reference: first.reference,
+        postings: [...first.postings],
+        postedAt: first.postedAt,
+        createdAt: first.createdAt,
+        revertedAt: new Date('2026-11-16T13:00:00.000Z'),
+        revertedByTransactionId: '0190a5d4-7b3c-7abc-8def-0123456789b3',
+      });
+      idempotencyKeys.claim.mockResolvedValueOnce({ replayed: true, transactionId: first.id });
+      transactionRepository.findById.mockResolvedValueOnce(revertedSince);
+
+      const { transaction } = await useCase.execute(keyed);
+
+      expect(transaction.isReverted).toBe(false);
+      expect(transaction.revertedByTransactionId).toBeNull();
+    });
+
     it('passes IdempotencyKeyReusedError through and writes nothing', async () => {
       const { useCase, idempotencyKeys, transactionRepository } = setup();
       idempotencyKeys.claim.mockRejectedValueOnce(new IdempotencyKeyReusedError());

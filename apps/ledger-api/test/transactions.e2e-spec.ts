@@ -629,6 +629,23 @@ describe('transactions (e2e)', () => {
         expect(list.body.data).toHaveLength(2);
       });
 
+      it('answers a replay with the body of the first call, even after the transaction was reverted', async () => {
+        const { organizationId, id } = await prepare();
+        const first = await revertTransaction(organizationId, id)
+          .set('Idempotency-Key', 'key-1')
+          .expect(201);
+        await revertTransaction(organizationId, first.body.id).expect(201); // reverts the revert
+
+        const replay = await revertTransaction(organizationId, id)
+          .set('Idempotency-Key', 'key-1')
+          .expect(201);
+
+        expect(replay.headers['idempotent-replayed']).toBe('true');
+        expect(replay.body).toEqual(first.body);
+        const current = await getTransaction(organizationId, first.body.id).expect(200);
+        expect(current.body.revertedByTransactionId).not.toBeNull();
+      });
+
       it('returns 422 IDEMPOTENCY_KEY_REUSED when the key is used for another transaction', async () => {
         const { organizationId, id } = await prepare();
         const other = await createTransaction(organizationId, {

@@ -765,10 +765,13 @@ describe('revert state', () => {
     });
 
     // The second one is blocked while the first one holds the row.
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    expect(secondDone).toBe(false);
-
-    releaseFirst();
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(secondDone).toBe(false);
+    } finally {
+      // Always release, so a failed assertion cannot leave the row locked.
+      releaseFirst();
+    }
     await first;
     const seenBySecond = await second;
 

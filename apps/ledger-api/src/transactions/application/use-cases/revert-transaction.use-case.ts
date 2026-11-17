@@ -215,6 +215,8 @@ export class RevertTransactionUseCase {
       // this is a bug. It must not be a 404: the caller did nothing wrong.
       throw new Error(`Idempotency key points to a missing transaction (${transactionId})`);
     }
-    return transaction;
+    // The answer of a repeat is the answer of the first call: the transaction
+    // as it was saved, even if it was reverted after that.
+    return transaction.asCreated();
   }
 }

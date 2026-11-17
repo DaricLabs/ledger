@@ -95,6 +95,16 @@ export class Transaction {
     return Transaction.from(props);
   }
 
+  /**
+   * This transaction as it was when it was saved: not reverted. A new
+   * transaction is never reverted, so this is what the request that made it
+   * answered. A repeated request (same idempotency key) must answer the same,
+   * even if the transaction was reverted since.
+   */
+  asCreated(): Transaction {
+    return Transaction.from({ ...this.props, revertedAt: null, revertedByTransactionId: null });
+  }
+
   /** Copies the data, so the caller cannot change a transaction through what it passed in. */
   private static from(props: ITransactionProps): Transaction {
     return new Transaction(

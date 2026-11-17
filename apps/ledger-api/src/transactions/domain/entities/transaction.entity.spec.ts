@@ -411,3 +411,35 @@ describe('Transaction.reverse', () => {
     );
   });
 });
+
+describe('Transaction.asCreated', () => {
+  const reverted = () =>
+    Transaction.reconstitute(
+      props({
+        reference: 'order-1',
+        revertedAt: new Date('2026-11-08T10:00:00.000Z'),
+        revertedByTransactionId: '0190a5d4-7b3c-7abc-8def-0123456789ae',
+      }),
+    );
+
+  it('clears the revert state and keeps everything else', () => {
+    const created = reverted().asCreated();
+
+    expect(created.isReverted).toBe(false);
+    expect(created.revertedAt).toBeNull();
+    expect(created.revertedByTransactionId).toBeNull();
+    expect(created.id).toBe(reverted().id);
+    expect(created.reference).toBe('order-1');
+    expect(created.postings).toEqual(reverted().postings);
+    expect(created.postedAt).toEqual(reverted().postedAt);
+    expect(created.createdAt).toEqual(reverted().createdAt);
+  });
+
+  it('does not change the transaction it is called on', () => {
+    const transaction = reverted();
+
+    transaction.asCreated();
+
+    expect(transaction.isReverted).toBe(true);
+  });
+});
