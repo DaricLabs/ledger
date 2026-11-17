@@ -13,6 +13,9 @@ import type { Response } from 'express';
 import { AccountExceptionFilter } from '../../../accounts/presentation/filters/account-exception.filter.js';
 import { OrganizationId } from '../../../core/tenant/organization-id.decorator.js';
 import { TenantGuard } from '../../../core/tenant/tenant.guard.js';
+import { IDEMPOTENT_REPLAYED_HEADER } from '../../../idempotency/presentation/constants/idempotency-header.constant.js';
+import { IdempotencyKey } from '../../../idempotency/presentation/decorators/idempotency-key.decorator.js';
+import { IdempotencyExceptionFilter } from '../../../idempotency/presentation/filters/idempotency-exception.filter.js';
 import { LedgerExceptionFilter } from '../../../ledgers/presentation/filters/ledger-exception.filter.js';
 import { ledgerNameSchema } from '../../../ledgers/presentation/dto/ledger-name.dto.js';
 import { CreateTransactionUseCase } from '../../application/use-cases/create-transaction.use-case.js';
@@ -44,16 +47,21 @@ const TRANSACTIONS_PATH = 'transactions';
  * errors become HTTP errors in `TransactionExceptionFilter`.
  *
  * A transaction belongs to a ledger, so its URL is under the ledger. The
- * ledger errors (`LEDGER_NOT_FOUND`) and the account errors
- * (`INSUFFICIENT_FUNDS`) are turned into HTTP errors by the filters of their
- * own features.
+ * ledger errors (`LEDGER_NOT_FOUND`), the account errors
+ * (`INSUFFICIENT_FUNDS`) and the idempotency errors (`IDEMPOTENCY_KEY_REUSED`)
+ * are turned into HTTP errors by the filters of their own features.
  *
  * `TenantGuard` runs first, so a bad `X-Organization-Id` header is refused
  * before the body or the URL is looked at.
  */
 @Controller(`${LEDGERS_PATH}/:ledgerName/${TRANSACTIONS_PATH}`)
 @UseGuards(TenantGuard)
-@UseFilters(LedgerExceptionFilter, AccountExceptionFilter, TransactionExceptionFilter)
+@UseFilters(
+  LedgerExceptionFilter,
+  AccountExceptionFilter,
+  IdempotencyExceptionFilter,
+  TransactionExceptionFilter,
+)
 export class TransactionsController {
   constructor(
     private readonly createTransaction: CreateTransactionUseCase,
@@ -74,32 +82,48 @@ export class TransactionsController {
    * A transaction that takes money out of an account before the money comes in
    * fails, even if the account would end above zero.
    *
-   * - `201`: the transaction was created. The `Location` header is its URL.
+   * **Safe to repeat.** Send an `Idempotency-Key` header (1 to 255 printable
+   * ASCII characters) and the transaction is created once, however many times
+   * the same request is sent. A repeat answers like the first call: `201`,
+   * the same body and the same `Location`, plus the header
+   * `Idempotent-Replayed: true`. A key is remembered for 24 hours, for one
+   * ledger. A request that failed leaves no key, so it can be sent again with
+   * the same key. Without the header, every request creates a transaction.
+   *
+   * - `201`: the transaction was created (or, with `Idempotent-Replayed: true`,
+   *   it was created by an earlier call with the same key). The `Location`
+   *   header is its URL.
    * - `400`: `VALIDATION` (bad shape: a missing field, an unknown field, a bad
-   *   address, asset code or amount, no postings or more than 100),
-   *   `INVALID_POSTING` (a posting has the same source and destination) or
-   *   `INVALID_TRANSACTION`.
+   *   address, asset code or amount, no postings or more than 100, or a bad
+   *   `Idempotency-Key`), `INVALID_POSTING` (a posting has the same source and
+   *   destination) or `INVALID_TRANSACTION`.
    * - `404`: `LEDGER_NOT_FOUND` (no such ledger in this organization).
    * - `409`: `TRANSACTION_REFERENCE_ALREADY_EXISTS` (the ledger already has a
    *   transaction with this reference).
-   * - `422`: `INSUFFICIENT_FUNDS` (an account does not have enough money).
+   * - `422`: `INSUFFICIENT_FUNDS` (an account does not have enough money) or
+   *   `IDEMPOTENCY_KEY_REUSED` (the key was used for a different request).
    */
   @Post()
   async create(
     @OrganizationId() organizationId: string,
     @Param('ledgerName', { schema: ledgerNameSchema }) ledgerName: string,
+    @IdempotencyKey() idempotencyKey: string | undefined,
     @Body({ schema: createTransactionSchema }) body: CreateTransactionDto,
     @Res({ passthrough: true }) response: Response,
   ): Promise<ITransactionResponse> {
-    const transaction = await this.createTransaction.execute({
+    const { transaction, replayed } = await this.createTransaction.execute({
       organizationId,
       ledgerName,
       reference: body.reference,
       postings: body.postings,
+      idempotencyKey,
     });
     // The ledger name passed the name pattern, and the id is made by the ledger,
     // so both are safe in a URL.
     response.location(`/${LEDGERS_PATH}/${ledgerName}/${TRANSACTIONS_PATH}/${transaction.id}`);
+    if (replayed) {
+      response.setHeader(IDEMPOTENT_REPLAYED_HEADER, 'true');
+    }
     return toTransactionResponseDto(transaction);
   }
 

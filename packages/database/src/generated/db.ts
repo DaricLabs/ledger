@@ -55,29 +55,29 @@ export interface Balances {
 }
 
 export interface IdempotencyKeys {
-  completed_at: Timestamp | null;
   created_at: Generated<Timestamp>;
+  /**
+   * After this time the key is free again: a new request with the same key runs as a new one.
+   */
   expires_at: Timestamp;
+  /**
+   * Idempotency-Key sent by the caller: 1 to 255 printable ASCII characters.
+   */
   key: string;
   ledger_id: string;
-  /**
-   * Lease expiry for in-progress operations; NULL once completed.
-   */
-  lock_expires_at: Timestamp | null;
-  method: "POST" | "PUT" | "PATCH" | "DELETE";
   /**
    * Stable API operation name, e.g. transactions.create.
    */
   operation: string;
   organization_id: string;
-  path: string;
   /**
    * SHA-256 digest (32 bytes) of the canonical request, used to detect key reuse with a changed payload.
    */
   request_hash: Buffer;
-  response_body: Json | null;
-  response_status: number | null;
-  state: Generated<"in_progress" | "completed">;
+  /**
+   * The transaction that the first request with this key created.
+   */
+  transaction_id: string;
 }
 
 export interface LedgerAuditAnchors {

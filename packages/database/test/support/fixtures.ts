@@ -165,6 +165,10 @@ export async function insertOutboxEvent(
   return Number(row.id);
 }
 
+/**
+ * Inserts one idempotency key. It points to `transaction_id`, or to a new
+ * transaction of the ledger when none is given.
+ */
 export async function insertIdempotencyKey(
   trx: Transaction<DB>,
   organizationId: string,
@@ -172,19 +176,16 @@ export async function insertIdempotencyKey(
   values: Partial<{
     operation: string;
     key: string;
-    method: 'POST' | 'PUT' | 'PATCH' | 'DELETE';
-    path: string;
-    state: 'in_progress' | 'completed';
-    response_status: number | null;
-    response_body: Record<string, never> | null;
-    completed_at: Date | null;
+    transaction_id: string;
     created_at: Date;
     expires_at: Date;
-    lock_expires_at: Date | null;
     request_hash: Buffer;
   }> = {},
 ): Promise<string> {
+  const { transaction_id: givenTransactionId, ...rest } = values;
   const key = values.key ?? randomName('key');
+  const transactionId =
+    givenTransactionId ?? (await insertTransaction(trx, organizationId, ledgerId));
   await trx
     .insertInto('idempotency_keys')
     .values({
@@ -192,12 +193,10 @@ export async function insertIdempotencyKey(
       ledger_id: ledgerId,
       operation: 'transactions.create',
       key,
-      method: 'POST',
-      path: '/v2/ledger/transactions',
       request_hash: sha256Like(7),
+      transaction_id: transactionId,
       expires_at: new Date(Date.now() + 24 * 3_600_000),
-      lock_expires_at: new Date(Date.now() + 30_000),
-      ...values,
+      ...rest,
     })
     .execute();
   return key;
@@ -235,7 +234,7 @@ export async function seedTenant(
     const seq = await insertLog(trx, organizationId, ledger.id, { transactionId });
     await insertAnchor(trx, organizationId, ledger.id, { from: seq, to: seq });
     await insertOutboxEvent(trx, organizationId, ledger.id);
-    await insertIdempotencyKey(trx, organizationId, ledger.id);
+    await insertIdempotencyKey(trx, organizationId, ledger.id, { transaction_id: transactionId });
     return { organizationId, ledgerId: ledger.id, transactionId };
   });
 }

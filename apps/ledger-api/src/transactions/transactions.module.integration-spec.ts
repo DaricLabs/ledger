@@ -6,6 +6,7 @@ import { unwrapTenantTransaction, withTenant, type LedgerDatabase } from '@ledge
 import { KYSELY_DB } from '../core/database/database.constant.js';
 import { Uuidv7IdGenerator } from '../ids/infrastructure/adapters/uuidv7-id-generator.adapter.js';
 import { CreateLedgerUseCase } from '../ledgers/application/use-cases/create-ledger.use-case.js';
+import { IdempotencyKeyReusedError } from '../idempotency/domain/errors/idempotency-key-reused.error.js';
 import { LedgerNotFoundError } from '../ledgers/domain/errors/ledger-not-found.error.js';
 import {
   CreateTransactionUseCase,
@@ -63,11 +64,19 @@ describe('TransactionsModule (real database)', () => {
     return { organizationId, ledgerId: ledger.id };
   }
 
-  const move = (
+  const move = async (
     organizationId: string,
     postings: ICreateTransactionInput['postings'],
     reference?: string,
-  ) => createTransaction.execute({ organizationId, ledgerName: 'main', postings, reference });
+  ) => {
+    const { transaction } = await createTransaction.execute({
+      organizationId,
+      ledgerName: 'main',
+      postings,
+      reference,
+    });
+    return transaction;
+  };
 
   const posting = (source: string, destination: string, amount: bigint, asset = 'USD') => ({
     source,
@@ -263,6 +272,190 @@ describe('TransactionsModule (real database)', () => {
     await expect(
       move(newOrganizationId(), [posting('world', 'users:1', 1n)]),
     ).rejects.toBeInstanceOf(LedgerNotFoundError);
+  });
+
+  describe('idempotency key', () => {
+    const keyed = (
+      organizationId: string,
+      idempotencyKey: string,
+      postings: ICreateTransactionInput['postings'],
+      reference?: string,
+    ) =>
+      createTransaction.execute({
+        organizationId,
+        ledgerName: 'main',
+        postings,
+        reference,
+        idempotencyKey,
+      });
+
+    it('creates the transaction once and replays it for the same request', async () => {
+      const { organizationId } = await setup();
+      const postings = [posting('world', 'users:1', 1000n)];
+
+      const first = await keyed(organizationId, 'key-1', postings, 'order-1');
+      const second = await keyed(organizationId, 'key-1', postings, 'order-1');
+      const state = await readState(organizationId);
+
+      expect(first.replayed).toBe(false);
+      expect(second.replayed).toBe(true);
+      expect(second.transaction).toEqual(first.transaction);
+      expect(state.transactions).toHaveLength(1);
+      expect(state.postings).toHaveLength(1);
+      expect(state.logs).toHaveLength(2); // ledger created + one transaction
+      expect(state.events).toHaveLength(2);
+      expect(balancesOf(state)).toEqual({ 'users:1 USD': '1000', 'world USD': '-1000' });
+    });
+
+    it('stores one key that points to the transaction', async () => {
+      const { organizationId, ledgerId } = await setup();
+
+      const { transaction } = await keyed(organizationId, 'key-1', [posting('world', 'a', 1n)]);
+      const keys = await withTenant(db, organizationId, (trx) =>
+        unwrapTenantTransaction(trx).selectFrom('idempotency_keys').selectAll().execute(),
+      );
+
+      expect(keys).toHaveLength(1);
+      expect(keys[0]).toMatchObject({
+        ledger_id: ledgerId,
+        operation: 'transactions.create',
+        key: 'key-1',
+        transaction_id: transaction.id,
+      });
+      expect(keys[0]!.request_hash).toHaveLength(32);
+    });
+
+    it('replays a request even when the postings would fail now', async () => {
+      const { organizationId } = await setup();
+      const first = await keyed(organizationId, 'key-1', [posting('world', 'users:1', 10n)]);
+      await move(organizationId, [posting('users:1', 'users:2', 10n)]); // users:1 is empty now
+
+      const again = await keyed(organizationId, 'key-1', [posting('world', 'users:1', 10n)]);
+
+      expect(again.replayed).toBe(true);
+      expect(again.transaction.id).toBe(first.transaction.id);
+    });
+
+    it('refuses the same key for another request, and changes nothing', async () => {
+      const { organizationId } = await setup();
+      await keyed(organizationId, 'key-1', [posting('world', 'a', 5n)]);
+
+      await expect(
+        keyed(organizationId, 'key-1', [posting('world', 'a', 6n)]),
+      ).rejects.toBeInstanceOf(IdempotencyKeyReusedError);
+      await expect(
+        keyed(organizationId, 'key-1', [posting('world', 'a', 5n)], 'other-reference'),
+      ).rejects.toBeInstanceOf(IdempotencyKeyReusedError);
+
+      const state = await readState(organizationId);
+      expect(state.transactions).toHaveLength(1);
+      expect(balancesOf(state)['a USD']).toBe('5');
+    });
+
+    it('keeps different keys, and requests without a key, apart', async () => {
+      const { organizationId } = await setup();
+
+      await keyed(organizationId, 'key-1', [posting('world', 'a', 5n)]);
+      await keyed(organizationId, 'key-2', [posting('world', 'a', 5n)]);
+      await move(organizationId, [posting('world', 'a', 5n)]);
+
+      expect(balancesOf(await readState(organizationId))['a USD']).toBe('15');
+    });
+
+    it('leaves no key when the request fails, so the same key can be used again', async () => {
+      const { organizationId } = await setup();
+      await expect(
+        keyed(organizationId, 'key-1', [posting('users:1', 'users:2', 1n)]),
+      ).rejects.toBeInstanceOf(InsufficientFundsError);
+      expect(
+        await withTenant(db, organizationId, (trx) =>
+          unwrapTenantTransaction(trx).selectFrom('idempotency_keys').selectAll().execute(),
+        ),
+      ).toHaveLength(0);
+
+      await move(organizationId, [posting('world', 'users:1', 5n)]);
+      const retry = await keyed(organizationId, 'key-1', [posting('users:1', 'users:2', 1n)]);
+
+      expect(retry.replayed).toBe(false);
+      expect(balancesOf(await readState(organizationId))['users:2 USD']).toBe('1');
+    });
+
+    it('leaves no key when the reference is already used', async () => {
+      const { organizationId } = await setup();
+      await move(organizationId, [posting('world', 'a', 1n)], 'order-1');
+
+      await expect(
+        keyed(organizationId, 'key-1', [posting('world', 'a', 1n)], 'order-1'),
+      ).rejects.toBeInstanceOf(TransactionReferenceAlreadyExistsError);
+
+      expect(
+        await withTenant(db, organizationId, (trx) =>
+          unwrapTenantTransaction(trx).selectFrom('idempotency_keys').selectAll().execute(),
+        ),
+      ).toHaveLength(0);
+    });
+
+    it('does not share a key between ledgers', async () => {
+      const { organizationId } = await setup();
+      await createLedger.execute({ organizationId, name: 'second', metadata: {} });
+
+      const a = await keyed(organizationId, 'key-1', [posting('world', 'a', 5n)]);
+      const b = await createTransaction.execute({
+        organizationId,
+        ledgerName: 'second',
+        postings: [posting('world', 'a', 5n)],
+        idempotencyKey: 'key-1',
+      });
+
+      expect(b.replayed).toBe(false);
+      expect(b.transaction.id).not.toBe(a.transaction.id);
+    });
+
+    it('does not share a key between organizations', async () => {
+      const one = await setup();
+      const two = await setup();
+
+      await keyed(one.organizationId, 'key-1', [posting('world', 'a', 5n)]);
+      const other = await keyed(two.organizationId, 'key-1', [posting('world', 'a', 5n)]);
+
+      expect(other.replayed).toBe(false);
+    });
+
+    it('creates one transaction when the same request is sent many times at once', async () => {
+      const { organizationId } = await setup();
+
+      const results = await Promise.all(
+        Array.from({ length: 8 }, () =>
+          keyed(organizationId, 'key-1', [posting('world', 'a', 5n)], 'order-1'),
+        ),
+      );
+      const state = await readState(organizationId);
+
+      expect(results.filter((r) => !r.replayed)).toHaveLength(1);
+      expect(new Set(results.map((r) => r.transaction.id)).size).toBe(1);
+      expect(state.transactions).toHaveLength(1);
+      expect(balancesOf(state)['a USD']).toBe('5');
+    });
+
+    it('runs again when the key has expired', async () => {
+      const { organizationId } = await setup();
+      const first = await keyed(organizationId, 'key-1', [posting('world', 'a', 5n)]);
+      await withTenant(db, organizationId, (trx) =>
+        unwrapTenantTransaction(trx)
+          .updateTable('idempotency_keys')
+          .set({
+            created_at: new Date(Date.now() - 48 * 3_600_000),
+            expires_at: new Date(Date.now() - 24 * 3_600_000),
+          })
+          .execute(),
+      );
+
+      const second = await keyed(organizationId, 'key-1', [posting('world', 'a', 5n)]);
+
+      expect(second.replayed).toBe(false);
+      expect(second.transaction.id).not.toBe(first.transaction.id);
+      expect(balancesOf(await readState(organizationId))['a USD']).toBe('10');
+    });
   });
 
   describe('get', () => {

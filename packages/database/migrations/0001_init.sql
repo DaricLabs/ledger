@@ -39,12 +39,13 @@
 --   procedures" guideline.
 --
 -- Idempotency model:
---   A lease (state + lock_expires_at) is used instead of holding a single
---   advisory-lock transaction, because callers may perform slow external
---   work (e.g. a PSP call) between check and completion and cannot keep a
---   database transaction open that long. Trade-off: a crashed holder
---   releases its lease only when lock_expires_at passes, not immediately on
---   disconnect.
+--   A key is claimed, the money is moved and the transaction is saved in ONE
+--   database transaction. So a key row exists only if its transaction exists.
+--   There is no "in progress" state to recover from: a crash rolls back both,
+--   and a second request with the same key waits on the primary key until the
+--   first one commits (then it is a replay) or rolls back (then it runs).
+--   Trade-off: all the work must fit inside the ledger's own database
+--   transaction, with no slow calls to outside systems in between.
 -- =========================================================================
 
 
@@ -387,72 +388,36 @@ create table idempotency_keys (
   ledger_id       uuidv7 not null,
   operation       operation_name not null,
   key             text not null,
-  method          text not null,
-  path            text not null,
   request_hash    sha256_digest not null,
-  response_status integer,
-  response_body   json_obj,
-  state           text not null default 'in_progress',
+  transaction_id  uuidv7 not null,
   created_at      timestamptz not null default now(),
-  completed_at    timestamptz,
   expires_at      timestamptz not null,
-  lock_expires_at timestamptz,
 
   primary key (organization_id, ledger_id, operation, key),
 
   foreign key (organization_id, ledger_id)
     references ledgers (organization_id, id),
 
-  constraint idempotency_keys_key_length
-    check (length(key) between 1 and 256),
+  foreign key (organization_id, ledger_id, transaction_id)
+    references transactions (organization_id, ledger_id, id)
+    deferrable initially deferred,
 
-  constraint idempotency_keys_method_valid
-    check (method in ('POST', 'PUT', 'PATCH', 'DELETE')),
-
-  constraint idempotency_keys_path_valid
-    check (path ~ '^/' and length(path) <= 512),
-
-  constraint idempotency_keys_state_valid
-    check (state in ('in_progress', 'completed')),
-
-  constraint idempotency_keys_completed_requires_response
-    check (
-      state <> 'completed'
-      or (
-        response_status is not null
-        and response_body is not null
-        and completed_at is not null
-      )
-    ),
-
-  constraint idempotency_keys_in_progress_requires_lock
-    check (
-      state <> 'in_progress'
-      or lock_expires_at is not null
-    ),
-
-  constraint idempotency_keys_response_status_valid
-    check (response_status is null or response_status between 100 and 599),
+  constraint idempotency_keys_key_valid
+    check (key ~ '^[ -~]{1,255}$'),
 
   constraint idempotency_keys_expiry_after_created
-    check (expires_at > created_at),
-
-  constraint idempotency_keys_completed_after_created
-    check (completed_at is null or completed_at >= created_at)
+    check (expires_at > created_at)
 );
--- Idempotency records scoped by organization, ledger, operation, and key.
--- Concurrency is managed with a lease (state + lock_expires_at) rather than
--- a single advisory-lock transaction; see the idempotency model note in the
--- header for the rationale and its crash-recovery trade-off.
+-- One row per request that was done with an Idempotency-Key, scoped by
+-- organization, ledger, operation and key. It points to the transaction the
+-- request created, so a repeated request can answer with that transaction.
+-- The key row is written before the transaction row (the key is claimed
+-- first), so the foreign key to the transaction is checked at COMMIT. If the
+-- transaction row is missing then, the whole database transaction fails.
 
 create index idx_idempotency_keys_expires_at
   on idempotency_keys (expires_at);
 -- Supports cleanup of expired idempotency records.
-
-create index idx_idempotency_keys_stale_locks
-  on idempotency_keys (lock_expires_at)
-  where state = 'in_progress';
--- Supports recovery of stale in-progress operations.
 
 
 -- ---------- Balance overdraft enforcement --------------------------------
@@ -834,11 +799,17 @@ comment on column outbox_events.aggregate_type is
 comment on column idempotency_keys.operation is
   'Stable API operation name, e.g. transactions.create.';
 
+comment on column idempotency_keys.key is
+  'Idempotency-Key sent by the caller: 1 to 255 printable ASCII characters.';
+
 comment on column idempotency_keys.request_hash is
   'SHA-256 digest (32 bytes) of the canonical request, used to detect key reuse with a changed payload.';
 
-comment on column idempotency_keys.lock_expires_at is
-  'Lease expiry for in-progress operations; NULL once completed.';
+comment on column idempotency_keys.transaction_id is
+  'The transaction that the first request with this key created.';
+
+comment on column idempotency_keys.expires_at is
+  'After this time the key is free again: a new request with the same key runs as a new one.';
 
 
 -- ---------- Runtime role grants ------------------------------------------
@@ -876,5 +847,9 @@ grant select, insert on outbox_events to ledger_runtime;
 grant update (published_at, publish_attempts, last_error)
   on outbox_events to ledger_runtime;
 
--- idempotency_keys: expired keys are cleaned up, so delete is allowed.
-grant select, insert, update, delete on idempotency_keys to ledger_runtime;
+-- idempotency_keys: an expired key is replaced by the next request with the
+-- same key (INSERT ... ON CONFLICT DO UPDATE), so those columns are updatable.
+-- Expired keys are deleted by a cleanup job, so delete is allowed.
+grant select, insert, delete on idempotency_keys to ledger_runtime;
+grant update (request_hash, transaction_id, created_at, expires_at)
+  on idempotency_keys to ledger_runtime;

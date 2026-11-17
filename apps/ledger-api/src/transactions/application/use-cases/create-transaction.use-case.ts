@@ -1,10 +1,15 @@
 import { Inject, Injectable } from '@nestjs/common';
+import type { TenantTransaction } from '@ledger/database';
 import { AccountAddress, AssetCode, Money } from '@ledger/domain';
 import {
   ACCOUNT_BALANCE_REPOSITORY,
   type IAccountBalanceRepository,
 } from '../../../accounts/application/ports/account-balance-repository.port.js';
 import { AccountBalance } from '../../../accounts/domain/entities/account-balance.entity.js';
+import {
+  IDEMPOTENCY_KEY_REPOSITORY,
+  type IIdempotencyKeyRepository,
+} from '../../../idempotency/application/ports/idempotency-key-repository.port.js';
 import {
   ID_GENERATOR,
   type IIdGenerator,
@@ -27,8 +32,10 @@ import {
 } from '../../../ledgers/application/ports/ledger-repository.port.js';
 import { LedgerNotFoundError } from '../../../ledgers/domain/errors/ledger-not-found.error.js';
 import { TRANSACTION_LOG_TYPE } from '../../domain/constants/transaction-log-type.constant.js';
+import { TRANSACTION_OPERATION } from '../../domain/constants/transaction-operation.constant.js';
 import { Transaction } from '../../domain/entities/transaction.entity.js';
 import { Posting } from '../../domain/value-objects/posting.vo.js';
+import { toCreateTransactionRequestHash } from '../mappers/create-transaction-request-hash.mapper.js';
 import { toPostingsPayload } from '../mappers/transaction-payload.mapper.js';
 import {
   TRANSACTION_REPOSITORY,
@@ -50,6 +57,22 @@ export interface ICreateTransactionInput {
   /** The id the caller gives to the transaction. Leave it out for none. */
   reference?: string;
   postings: readonly IPostingInput[];
+  /**
+   * The `Idempotency-Key` of the request. Leave it out and the request runs
+   * every time. With a key, the request runs once: the same key with the same
+   * request gives the first transaction again, and the same key with another
+   * request is refused.
+   */
+  idempotencyKey?: string;
+}
+
+export interface ICreateTransactionResult {
+  transaction: Transaction;
+  /**
+   * `true` when the request was done before with the same key. Nothing was
+   * written, and `transaction` is the one the first call created.
+   */
+  replayed: boolean;
 }
 
 /**
@@ -58,14 +81,15 @@ export interface ICreateTransactionInput {
  * In one tenant transaction it:
  *
  * 1. finds the ledger;
- * 2. creates the accounts and balances that do not exist yet (`world` may go
+ * 2. claims the idempotency key, if the request has one (see below);
+ * 3. creates the accounts and balances that do not exist yet (`world` may go
  *    below zero, every other account may not);
- * 3. locks every balance the postings touch, in one fixed order, so two
+ * 4. locks every balance the postings touch, in one fixed order, so two
  *    transactions that share accounts wait for each other and never deadlock;
- * 4. applies the postings to the locked balances in the domain, which refuses
+ * 5. applies the postings to the locked balances in the domain, which refuses
  *    a posting that takes more than an account has;
- * 5. saves the new balances, the transaction and its postings;
- * 6. writes the `TRANSACTION_CREATED` journal entry and the
+ * 6. saves the new balances, the transaction and its postings;
+ * 7. writes the `TRANSACTION_CREATED` journal entry and the
  *    `ledger.transaction.created` outbox event.
  *
  * Either all of it is saved or none. The journal entry takes a lock on the
@@ -74,13 +98,23 @@ export interface ICreateTransactionInput {
  * journal comes last: a transaction holds this lock for as short a time as it
  * can, and no transaction waits for a balance while it holds the lock.
  *
+ * **Idempotency.** With an `idempotencyKey`, the key is claimed in the same
+ * database transaction as the money. So the key is saved if and only if the
+ * transaction is saved: a request that fails or crashes leaves no key, and a
+ * retry runs again. If the key was already used for the same request, nothing
+ * else runs, and the first transaction is returned with `replayed: true`. If
+ * it was used for another request, the call fails. Two calls with the same key
+ * at the same time never both run: the second waits for the first.
+ *
  * The domain checks the postings before any transaction is opened. Domain
  * errors (`InvalidPostingError`, `InvalidTransactionError`,
- * `InsufficientFundsError`, `TransactionReferenceAlreadyExistsError` and the
- * errors of the value objects of `@ledger/domain`) pass through unchanged. The
- * presentation layer turns them into HTTP responses.
+ * `InsufficientFundsError`, `TransactionReferenceAlreadyExistsError`,
+ * `IdempotencyKeyReusedError` and the errors of the value objects of
+ * `@ledger/domain`) pass through unchanged. The presentation layer turns them
+ * into HTTP responses.
  *
  * @throws LedgerNotFoundError If the organization has no ledger with this name.
+ * @throws IdempotencyKeyReusedError If the key was used for another request.
  */
 @Injectable()
 export class CreateTransactionUseCase {
@@ -88,15 +122,24 @@ export class CreateTransactionUseCase {
     @Inject(ID_GENERATOR) private readonly ids: IIdGenerator,
     @Inject(TENANT_TRANSACTION_RUNNER) private readonly transactions: ITenantTransactionRunner,
     @Inject(LEDGER_REPOSITORY) private readonly ledgers: ILedgerRepository,
+    @Inject(IDEMPOTENCY_KEY_REPOSITORY) private readonly idempotencyKeys: IIdempotencyKeyRepository,
     @Inject(ACCOUNT_BALANCE_REPOSITORY) private readonly balances: IAccountBalanceRepository,
     @Inject(TRANSACTION_REPOSITORY) private readonly transactionRepository: ITransactionRepository,
     @Inject(LEDGER_LOG_WRITER) private readonly logs: ILedgerLogWriter,
     @Inject(OUTBOX_WRITER) private readonly outbox: IOutboxWriter,
   ) {}
 
-  async execute(input: ICreateTransactionInput): Promise<Transaction> {
+  async execute(input: ICreateTransactionInput): Promise<ICreateTransactionResult> {
     // Checked first, because it needs no database.
     const postings = input.postings.map(toPosting);
+    const idempotency =
+      input.idempotencyKey === undefined
+        ? null
+        : {
+            operation: TRANSACTION_OPERATION.CREATE,
+            key: input.idempotencyKey,
+            requestHash: toCreateTransactionRequestHash(input),
+          };
 
     return this.transactions.run(input.organizationId, async (trx) => {
       const ledger = await this.ledgers.findByName(trx, input.ledgerName);
@@ -104,9 +147,24 @@ export class CreateTransactionUseCase {
         throw new LedgerNotFoundError(input.ledgerName);
       }
 
+      // The id is made before the key is claimed, because the key points to it.
+      const transactionId = this.ids.next();
+      if (idempotency !== null) {
+        const claim = await this.idempotencyKeys.claim(trx, ledger.id, {
+          ...idempotency,
+          transactionId,
+        });
+        if (claim.replayed) {
+          return {
+            transaction: await this.findReplayed(trx, ledger.id, claim.transactionId),
+            replayed: true,
+          };
+        }
+      }
+
       const now = new Date();
       const transaction = Transaction.create({
-        id: this.ids.next(),
+        id: transactionId,
         organizationId: input.organizationId,
         ledgerId: ledger.id,
         reference: input.reference ?? null,
@@ -152,8 +210,23 @@ export class CreateTransactionUseCase {
         },
       });
 
-      return transaction;
+      return { transaction, replayed: false };
     });
+  }
+
+  /** Loads the transaction that a key points to. The key and the transaction are saved together. */
+  private async findReplayed(
+    trx: TenantTransaction,
+    ledgerId: string,
+    transactionId: string,
+  ): Promise<Transaction> {
+    const transaction = await this.transactionRepository.findById(trx, ledgerId, transactionId);
+    if (transaction === null) {
+      // The database refuses a key without its transaction (a foreign key), so
+      // this is a bug. It must not be a 404: the ledger did nothing wrong.
+      throw new Error(`Idempotency key points to a missing transaction (${transactionId})`);
+    }
+    return transaction;
   }
 }
 
