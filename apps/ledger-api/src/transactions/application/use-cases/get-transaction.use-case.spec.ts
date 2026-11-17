@@ -36,6 +36,8 @@ const storedTransaction = Transaction.reconstitute({
   ],
   postedAt: new Date('2026-11-08T10:00:00.000Z'),
   createdAt: new Date('2026-11-08T10:00:01.000Z'),
+  revertedAt: null,
+  revertedByTransactionId: null,
 });
 
 function setup() {
@@ -69,6 +71,8 @@ function setup() {
       calls.push('find transaction');
       return storedTransaction;
     }),
+    lockById: vi.fn<ITransactionRepository['lockById']>(),
+    markReverted: vi.fn<ITransactionRepository['markReverted']>(),
     findPage: vi.fn<ITransactionRepository['findPage']>(),
   };
 

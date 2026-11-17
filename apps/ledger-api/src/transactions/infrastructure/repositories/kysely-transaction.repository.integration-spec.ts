@@ -605,3 +605,174 @@ describe('KyselyTransactionRepository.findPage', () => {
     expect(idsOf(page)).toEqual([saved[0]!.id]);
   });
 });
+
+describe('revert state', () => {
+  /** Saves a transaction and the transaction that reverses it, and returns both. */
+  async function saveWithReversal(trx: TenantTransaction, organizationId: string) {
+    const ledgerId = await prepareLedger(trx, organizationId);
+    const original = makeTransaction(organizationId, ledgerId, 'ref-1');
+    await repository.insert(trx, original);
+    const reversal = original.reverse({ id: ids.next(), at: new Date('2026-11-08T12:00:00.000Z') });
+    await repository.insert(trx, reversal);
+    return { ledgerId, original, reversal };
+  }
+
+  it('reads a transaction that was not reverted as not reverted', async () => {
+    const organizationId = ids.next();
+
+    const found = await withTenant(db, organizationId, async (trx) => {
+      const ledgerId = await prepareLedger(trx, organizationId);
+      const created = makeTransaction(organizationId, ledgerId, null);
+      await repository.insert(trx, created);
+      return repository.findById(trx, ledgerId, created.id);
+    });
+
+    expect(found?.isReverted).toBe(false);
+    expect(found?.revertedAt).toBeNull();
+    expect(found?.revertedByTransactionId).toBeNull();
+  });
+
+  it('saves the revert mark, and findById, lockById and findPage read it', async () => {
+    const organizationId = ids.next();
+
+    const { reversal, byId, locked, page } = await withTenant(db, organizationId, async (trx) => {
+      const { ledgerId, original, reversal } = await saveWithReversal(trx, organizationId);
+      await repository.markReverted(trx, ledgerId, original.id, reversal);
+      return {
+        reversal,
+        byId: await repository.findById(trx, ledgerId, original.id),
+        locked: await repository.lockById(trx, ledgerId, original.id),
+        page: await repository.findPage(trx, ledgerId, { limit: 10 }),
+      };
+    });
+
+    for (const read of [byId, locked]) {
+      expect(read?.isReverted).toBe(true);
+      expect(read?.revertedAt).toEqual(new Date('2026-11-08T12:00:00.000Z'));
+      expect(read?.revertedByTransactionId).toBe(reversal.id);
+    }
+    expect(page.transactions.map((t) => [t.reference, t.isReverted])).toEqual([
+      [null, false], // the reversal, saved with the later postedAt
+      ['ref-1', true],
+    ]);
+  });
+
+  it('refuses to mark a transaction twice, and keeps the first mark', async () => {
+    const organizationId = ids.next();
+
+    const { error, found, first } = await withTenant(db, organizationId, async (trx) => {
+      const { ledgerId, original, reversal } = await saveWithReversal(trx, organizationId);
+      const second = original.reverse({ id: ids.next(), at: new Date('2026-11-08T13:00:00.000Z') });
+      await repository.insert(trx, second);
+      await repository.markReverted(trx, ledgerId, original.id, reversal);
+      const thrown = await repository
+        .markReverted(trx, ledgerId, original.id, second)
+        .catch((caught: unknown) => caught);
+      return {
+        error: thrown,
+        found: await repository.findById(trx, ledgerId, original.id),
+        first: reversal,
+      };
+    });
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain('already reverted');
+    expect(found?.revertedByTransactionId).toBe(first.id);
+  });
+
+  it('refuses to mark a transaction that is not in the ledger', async () => {
+    const organizationId = ids.next();
+
+    const error = await withTenant(db, organizationId, async (trx) => {
+      const { original, reversal } = await saveWithReversal(trx, organizationId);
+      await repository.markReverted(trx, ids.next(), original.id, reversal); // another ledger
+    }).catch((thrown: unknown) => thrown);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain('not found');
+  });
+
+  it('refuses a mark that points to a transaction that is not saved (foreign key)', async () => {
+    const organizationId = ids.next();
+
+    const error = await withTenant(db, organizationId, async (trx) => {
+      const ledgerId = await prepareLedger(trx, organizationId);
+      const original = makeTransaction(organizationId, ledgerId, null);
+      await repository.insert(trx, original);
+      const unsaved = original.reverse({ id: ids.next(), at: new Date() });
+      await repository.markReverted(trx, ledgerId, original.id, unsaved);
+    }).catch((thrown: unknown) => thrown);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).toMatchObject({ code: SqlState.ForeignKeyViolation });
+  });
+
+  it('does not lock or read the transaction of another ledger or organization', async () => {
+    const organizationId = ids.next();
+    const { ledgerId, transactionId } = await withTenant(db, organizationId, async (trx) => {
+      const id = await prepareLedger(trx, organizationId);
+      const created = makeTransaction(organizationId, id, null);
+      await repository.insert(trx, created);
+      return { ledgerId: id, transactionId: created.id };
+    });
+
+    const otherLedger = await withTenant(db, organizationId, (trx) =>
+      repository.lockById(trx, ids.next(), transactionId),
+    );
+    const otherOrganization = await withTenant(db, ids.next(), (trx) =>
+      repository.lockById(trx, ledgerId, transactionId),
+    );
+
+    expect(otherLedger).toBeNull();
+    expect(otherOrganization).toBeNull();
+  });
+
+  it('gives null from lockById for an id that does not exist', async () => {
+    const organizationId = ids.next();
+
+    const found = await withTenant(db, organizationId, async (trx) => {
+      const ledgerId = await prepareLedger(trx, organizationId);
+      return repository.lockById(trx, ledgerId, ids.next());
+    });
+
+    expect(found).toBeNull();
+  });
+
+  it('makes a second lockById wait, and then shows it the mark of the first', async () => {
+    const organizationId = ids.next();
+    const { ledgerId, original, reversal } = await withTenant(db, organizationId, (trx) =>
+      saveWithReversal(trx, organizationId),
+    );
+
+    let releaseFirst!: () => void;
+    const firstMayEnd = new Promise<void>((resolve) => (releaseFirst = resolve));
+    let firstHoldsLock!: () => void;
+    const firstHasLock = new Promise<void>((resolve) => (firstHoldsLock = resolve));
+
+    const first = withTenant(db, organizationId, async (trx) => {
+      await repository.lockById(trx, ledgerId, original.id);
+      firstHoldsLock();
+      await firstMayEnd;
+      await repository.markReverted(trx, ledgerId, original.id, reversal);
+    });
+    await firstHasLock;
+
+    let secondDone = false;
+    const second = withTenant(db, organizationId, async (trx) => {
+      const found = await repository.lockById(trx, ledgerId, original.id);
+      secondDone = true;
+      return found;
+    });
+
+    // The second one is blocked while the first one holds the row.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(secondDone).toBe(false);
+
+    releaseFirst();
+    await first;
+    const seenBySecond = await second;
+
+    expect(seenBySecond?.isReverted).toBe(true);
+    expect(seenBySecond?.revertedByTransactionId).toBe(reversal.id);
+  });
+});

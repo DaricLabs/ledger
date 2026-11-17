@@ -22,6 +22,8 @@ const TRANSACTION_COLUMNS = [
   'reference',
   'posted_at',
   'created_at',
+  'reverted_at',
+  'reverted_by_transaction_id',
 ] as const;
 
 /** The `postings` columns a posting is built from. */
@@ -35,6 +37,8 @@ interface ITransactionRow {
   reference: string | null;
   posted_at: Date;
   created_at: Date;
+  reverted_at: Date | null;
+  reverted_by_transaction_id: string | null;
 }
 
 /** A row with the columns of `POSTING_COLUMNS`, as Kysely returns it. */
@@ -95,31 +99,37 @@ export class KyselyTransactionRepository implements ITransactionRepository {
     ledgerId: string,
     id: string,
   ): Promise<Transaction | null> {
+    return this.load(trx, ledgerId, id, false);
+  }
+
+  async lockById(
+    trx: TenantTransaction,
+    ledgerId: string,
+    id: string,
+  ): Promise<Transaction | null> {
+    return this.load(trx, ledgerId, id, true);
+  }
+
+  async markReverted(
+    trx: TenantTransaction,
+    ledgerId: string,
+    id: string,
+    reversal: Transaction,
+  ): Promise<void> {
     const k = unwrapTenantTransaction(trx);
 
-    // No `organization_id` filter on purpose: row-level security already limits
-    // the rows to the organization of the transaction. The ledger is filtered,
-    // so a transaction of another ledger is not found.
-    const row = await k
-      .selectFrom('transactions')
-      .select(TRANSACTION_COLUMNS)
+    // `reverted_at is null` is a second guard behind the lock and the check of
+    // the caller: a transaction can never be marked twice.
+    const result = await k
+      .updateTable('transactions')
+      .set({ reverted_at: reversal.createdAt, reverted_by_transaction_id: reversal.id })
       .where('ledger_id', '=', ledgerId)
       .where('id', '=', id)
+      .where('reverted_at', 'is', null)
       .executeTakeFirst();
-    if (row === undefined) {
-      return null;
+    if (result.numUpdatedRows !== 1n) {
+      throw new Error(`Transaction ${id} was not found or was already reverted`);
     }
-
-    // A transaction and its postings are saved in one database transaction, so
-    // if the transaction row is visible, all its postings are too.
-    const postings = await k
-      .selectFrom('postings')
-      .select(POSTING_COLUMNS)
-      .where('transaction_id', '=', row.id)
-      .orderBy('seq')
-      .execute();
-
-    return toTransaction(row, postings);
   }
 
   async findPage(
@@ -187,6 +197,41 @@ export class KyselyTransactionRepository implements ITransactionRepository {
       hasMore: rows.length > query.limit,
     };
   }
+
+  /** Reads a transaction with its postings. With `lock`, the transaction row is locked until the transaction ends. */
+  private async load(
+    trx: TenantTransaction,
+    ledgerId: string,
+    id: string,
+    lock: boolean,
+  ): Promise<Transaction | null> {
+    const k = unwrapTenantTransaction(trx);
+
+    // No `organization_id` filter on purpose: row-level security already limits
+    // the rows to the organization of the transaction. The ledger is filtered,
+    // so a transaction of another ledger is not found.
+    const select = k
+      .selectFrom('transactions')
+      .select(TRANSACTION_COLUMNS)
+      .where('ledger_id', '=', ledgerId)
+      .where('id', '=', id);
+    const row = await (lock ? select.forUpdate() : select).executeTakeFirst();
+    if (row === undefined) {
+      return null;
+    }
+
+    // A transaction and its postings are saved in one database transaction, so
+    // if the transaction row is visible, all its postings are too. Postings
+    // never change, so they need no lock.
+    const postings = await k
+      .selectFrom('postings')
+      .select(POSTING_COLUMNS)
+      .where('transaction_id', '=', row.id)
+      .orderBy('seq')
+      .execute();
+
+    return toTransaction(row, postings);
+  }
 }
 
 /** Builds the entity from a transaction row and its posting rows, which are in the order of `seq`. */
@@ -205,5 +250,7 @@ function toTransaction(row: ITransactionRow, postings: readonly IPostingRow[]): 
     ),
     postedAt: row.posted_at,
     createdAt: row.created_at,
+    revertedAt: row.reverted_at,
+    revertedByTransactionId: row.reverted_by_transaction_id,
   });
 }

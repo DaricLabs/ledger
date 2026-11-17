@@ -53,6 +53,35 @@ export interface ITransactionRepository {
   findById(trx: TenantTransaction, ledgerId: string, id: string): Promise<Transaction | null>;
 
   /**
+   * Like `findById`, and the transaction row is locked until the transaction
+   * ends, so no other transaction can revert it in the meantime. A caller that
+   * waits for the lock sees the result of the transaction that held it.
+   *
+   * Lock a transaction before its balances, never after: every writer takes
+   * its locks in that order, so two writers never wait for each other.
+   *
+   * @returns The transaction, or `null` if the ledger has none with this id.
+   */
+  lockById(trx: TenantTransaction, ledgerId: string, id: string): Promise<Transaction | null>;
+
+  /**
+   * Saves that a transaction was reverted: sets when, and by which
+   * transaction. The reverting transaction must be saved before, in the same
+   * database transaction (foreign key).
+   *
+   * @param reversal The transaction that undoes the one with this `id`. Its
+   * `createdAt` is the time of the revert.
+   * @throws Error If the transaction is missing or already reverted. The
+   * caller locked it with `lockById` and checked it, so this means a bug.
+   */
+  markReverted(
+    trx: TenantTransaction,
+    ledgerId: string,
+    id: string,
+    reversal: Transaction,
+  ): Promise<void>;
+
+  /**
    * Loads one page of the transactions of a ledger, newest first: by
    * `postedAt` from the latest, and by `id` from the biggest when two have the
    * same `postedAt`. Every transaction comes with its postings in order.

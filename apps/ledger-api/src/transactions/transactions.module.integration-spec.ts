@@ -14,7 +14,9 @@ import {
 } from './application/use-cases/create-transaction.use-case.js';
 import { GetTransactionUseCase } from './application/use-cases/get-transaction.use-case.js';
 import { ListTransactionsUseCase } from './application/use-cases/list-transactions.use-case.js';
+import { RevertTransactionUseCase } from './application/use-cases/revert-transaction.use-case.js';
 import { InsufficientFundsError } from '../accounts/domain/errors/insufficient-funds.error.js';
+import { TransactionAlreadyRevertedError } from './domain/errors/transaction-already-reverted.error.js';
 import { TransactionNotFoundError } from './domain/errors/transaction-not-found.error.js';
 import { TransactionReferenceAlreadyExistsError } from './domain/errors/transaction-reference-already-exists.error.js';
 import { TransactionsModule } from './transactions.module.js';
@@ -30,6 +32,7 @@ describe('TransactionsModule (real database)', () => {
   let createTransaction: CreateTransactionUseCase;
   let getTransaction: GetTransactionUseCase;
   let listTransactions: ListTransactionsUseCase;
+  let revertTransaction: RevertTransactionUseCase;
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -51,6 +54,7 @@ describe('TransactionsModule (real database)', () => {
     createTransaction = app.get(CreateTransactionUseCase);
     getTransaction = app.get(GetTransactionUseCase);
     listTransactions = app.get(ListTransactionsUseCase);
+    revertTransaction = app.get(RevertTransactionUseCase);
   });
 
   afterAll(async () => {
@@ -689,6 +693,454 @@ describe('TransactionsModule (real database)', () => {
         }
       }
       expect(balancesOf(state)['a USD']).toBe('5');
+    });
+  });
+
+  describe('revert', () => {
+    const revert = (organizationId: string, transactionId: string, idempotencyKey?: string) =>
+      revertTransaction.execute({
+        organizationId,
+        ledgerName: 'main',
+        transactionId,
+        idempotencyKey,
+      });
+
+    /** The original transaction of most tests: 1000 comes in, and 25 of it goes to the fees. */
+    const original = (organizationId: string) =>
+      move(
+        organizationId,
+        [posting('world', 'users:1', 1000n), posting('users:1', 'platform:fees', 25n)],
+        'order-1',
+      );
+
+    it('moves the money back with a new transaction and marks the old one', async () => {
+      const { organizationId, ledgerId } = await setup();
+      const first = await original(organizationId);
+
+      const { transaction, replayed } = await revert(organizationId, first.id);
+      const state = await readState(organizationId);
+
+      expect(replayed).toBe(false);
+      expect(balancesOf(state)).toEqual({
+        'platform:fees USD': '0',
+        'users:1 USD': '0',
+        'world USD': '0',
+      });
+      expect(state.transactions).toHaveLength(2);
+      const stored = Object.fromEntries(state.transactions.map((t) => [t.id, t]));
+      expect(stored[first.id]).toMatchObject({
+        reference: 'order-1',
+        reverted_at: transaction.createdAt,
+        reverted_by_transaction_id: transaction.id,
+      });
+      expect(stored[transaction.id]).toMatchObject({
+        ledger_id: ledgerId,
+        reference: null,
+        posted_at: transaction.postedAt,
+        reverted_at: null,
+        reverted_by_transaction_id: null,
+      });
+      expect(
+        state.postings
+          .filter((p) => p.transaction_id === transaction.id)
+          .map((p) => [p.seq, p.source_account, p.destination_account, p.amount]),
+      ).toEqual([
+        [1, 'platform:fees', 'users:1', '25'],
+        [2, 'users:1', 'world', '1000'],
+      ]);
+    });
+
+    it('does not change the postings or the first transaction', async () => {
+      const { organizationId } = await setup();
+      const first = await original(organizationId);
+      const before = await readState(organizationId);
+
+      await revert(organizationId, first.id);
+      const after = await readState(organizationId);
+
+      expect(after.postings.filter((p) => p.transaction_id === first.id)).toEqual(before.postings);
+      const firstRow = after.transactions.find((t) => t.id === first.id);
+      expect(firstRow).toMatchObject({
+        posted_at: first.postedAt,
+        created_at: first.createdAt,
+        reference: 'order-1',
+      });
+    });
+
+    it('writes one journal entry and one outbox event, about the new transaction', async () => {
+      const { organizationId, ledgerId } = await setup();
+      const first = await original(organizationId);
+
+      const { transaction } = await revert(organizationId, first.id);
+      const state = await readState(organizationId);
+
+      // ledger created, transaction created, transaction reverted
+      expect(state.logs.map((log) => [log.seq, log.type])).toEqual([
+        ['1', 'LEDGER_CREATED'],
+        ['2', 'TRANSACTION_CREATED'],
+        ['3', 'TRANSACTION_REVERTED'],
+      ]);
+      expect(state.logs[2]).toMatchObject({
+        ledger_id: ledgerId,
+        transaction_id: transaction.id,
+        payload: {
+          revertedTransactionId: first.id,
+          postedAt: transaction.postedAt.toISOString(),
+          postings: [
+            { source: 'platform:fees', destination: 'users:1', asset: 'USD', amount: '25' },
+            { source: 'users:1', destination: 'world', asset: 'USD', amount: '1000' },
+          ],
+        },
+      });
+      expect(state.events).toHaveLength(3);
+      expect(state.events[2]).toMatchObject({
+        aggregate_type: 'transaction',
+        aggregate_id: transaction.id,
+        event_type: 'ledger.transaction.reverted',
+        payload: { transactionId: transaction.id, revertedTransactionId: first.id },
+      });
+    });
+
+    it('shows the revert state when the transaction is read again', async () => {
+      const { organizationId } = await setup();
+      const first = await original(organizationId);
+
+      const { transaction } = await revert(organizationId, first.id);
+      const read = await getTransaction.execute({
+        organizationId,
+        ledgerName: 'main',
+        transactionId: first.id,
+      });
+      const page = await listTransactions.execute({
+        organizationId,
+        ledgerName: 'main',
+        pageSize: 10,
+      });
+
+      expect(read.isReverted).toBe(true);
+      expect(read.revertedAt).toEqual(transaction.createdAt);
+      expect(read.revertedByTransactionId).toBe(transaction.id);
+      expect(page.transactions.map((t) => [t.id, t.isReverted])).toEqual([
+        [transaction.id, false],
+        [first.id, true],
+      ]);
+    });
+
+    it('refuses a second revert of the same transaction, and changes nothing', async () => {
+      const { organizationId } = await setup();
+      const first = await original(organizationId);
+      await revert(organizationId, first.id);
+      const before = await readState(organizationId);
+
+      await expect(revert(organizationId, first.id)).rejects.toBeInstanceOf(
+        TransactionAlreadyRevertedError,
+      );
+
+      const after = await readState(organizationId);
+      expect(after.transactions).toEqual(before.transactions);
+      expect(after.logs).toHaveLength(before.logs.length);
+      expect(after.events).toHaveLength(before.events.length);
+      expect(balancesOf(after)).toEqual(balancesOf(before));
+    });
+
+    it('can revert the revert: the money goes where it first went', async () => {
+      const { organizationId } = await setup();
+      const first = await original(organizationId);
+      const { transaction: reversal } = await revert(organizationId, first.id);
+
+      await revert(organizationId, reversal.id);
+
+      expect(balancesOf(await readState(organizationId))).toEqual({
+        'platform:fees USD': '25',
+        'users:1 USD': '975',
+        'world USD': '-1000',
+      });
+    });
+
+    it('reverts only the money of that transaction, when others touched the same accounts', async () => {
+      const { organizationId } = await setup();
+      await move(organizationId, [posting('world', 'a', 500n)]);
+      const second = await move(organizationId, [posting('world', 'a', 100n)]);
+      await move(organizationId, [posting('a', 'b', 50n)]);
+
+      await revert(organizationId, second.id);
+
+      expect(balancesOf(await readState(organizationId))).toEqual({
+        'a USD': '450',
+        'b USD': '50',
+        'world USD': '-500',
+      });
+    });
+
+    it('keeps assets apart', async () => {
+      const { organizationId } = await setup();
+      const first = await move(organizationId, [
+        posting('world', 'a', 100n),
+        posting('world', 'a', 7n, 'EUR'),
+      ]);
+
+      await revert(organizationId, first.id);
+
+      expect(balancesOf(await readState(organizationId))).toEqual({
+        'a EUR': '0',
+        'a USD': '0',
+        'world EUR': '0',
+        'world USD': '0',
+      });
+    });
+
+    it('fails with InsufficientFundsError when the money was spent, and changes nothing', async () => {
+      const { organizationId } = await setup();
+      const first = await original(organizationId);
+      await move(organizationId, [posting('users:1', 'users:2', 900n)]); // users:1 has 75 left
+      const before = await readState(organizationId);
+
+      await expect(revert(organizationId, first.id)).rejects.toBeInstanceOf(InsufficientFundsError);
+
+      const after = await readState(organizationId);
+      expect(after.transactions).toEqual(before.transactions);
+      expect(after.transactions.every((t) => t.reverted_at === null)).toBe(true);
+      expect(after.logs).toHaveLength(before.logs.length);
+      expect(after.events).toHaveLength(before.events.length);
+      expect(balancesOf(after)).toEqual(balancesOf(before));
+    });
+
+    it('throws LedgerNotFoundError for a ledger that does not exist', async () => {
+      const { organizationId } = await setup();
+      const first = await original(organizationId);
+
+      await expect(
+        revertTransaction.execute({
+          organizationId,
+          ledgerName: 'nope',
+          transactionId: first.id,
+        }),
+      ).rejects.toBeInstanceOf(LedgerNotFoundError);
+    });
+
+    it('throws TransactionNotFoundError for an id that does not exist', async () => {
+      const { organizationId } = await setup();
+
+      await expect(revert(organizationId, newOrganizationId())).rejects.toBeInstanceOf(
+        TransactionNotFoundError,
+      );
+    });
+
+    it('does not revert a transaction of another ledger of the same organization', async () => {
+      const { organizationId } = await setup();
+      await createLedger.execute({ organizationId, name: 'other', metadata: {} });
+      const first = await original(organizationId);
+
+      await expect(
+        revertTransaction.execute({
+          organizationId,
+          ledgerName: 'other',
+          transactionId: first.id,
+        }),
+      ).rejects.toBeInstanceOf(TransactionNotFoundError);
+      expect(balancesOf(await readState(organizationId))['users:1 USD']).toBe('975');
+    });
+
+    it('does not revert a transaction of another organization', async () => {
+      const { organizationId } = await setup();
+      const first = await original(organizationId);
+      const other = await setup();
+
+      await expect(revert(other.organizationId, first.id)).rejects.toBeInstanceOf(
+        TransactionNotFoundError,
+      );
+      expect(balancesOf(await readState(organizationId))['users:1 USD']).toBe('975');
+    });
+
+    describe('idempotency key', () => {
+      it('reverts once and replays the first result for the same key', async () => {
+        const { organizationId } = await setup();
+        const first = await original(organizationId);
+
+        const one = await revert(organizationId, first.id, 'key-1');
+        const two = await revert(organizationId, first.id, 'key-1');
+        const state = await readState(organizationId);
+
+        expect(one.replayed).toBe(false);
+        expect(two.replayed).toBe(true);
+        expect(two.transaction.id).toBe(one.transaction.id);
+        expect(state.transactions).toHaveLength(2);
+        expect(state.logs).toHaveLength(3);
+        expect(state.events).toHaveLength(3);
+        expect(balancesOf(state)['users:1 USD']).toBe('0');
+      });
+
+      it('stores the key for the revert operation, pointing to the new transaction', async () => {
+        const { organizationId, ledgerId } = await setup();
+        const first = await original(organizationId);
+
+        const { transaction } = await revert(organizationId, first.id, 'key-1');
+        const keys = await withTenant(db, organizationId, (trx) =>
+          unwrapTenantTransaction(trx).selectFrom('idempotency_keys').selectAll().execute(),
+        );
+
+        expect(keys).toHaveLength(1);
+        expect(keys[0]).toMatchObject({
+          ledger_id: ledgerId,
+          operation: 'transactions.revert',
+          key: 'key-1',
+          transaction_id: transaction.id,
+        });
+      });
+
+      it('refuses the same key for another transaction, and changes nothing', async () => {
+        const { organizationId } = await setup();
+        const first = await original(organizationId);
+        const second = await move(organizationId, [posting('world', 'c', 5n)]);
+        await revert(organizationId, first.id, 'key-1');
+        const before = await readState(organizationId);
+
+        await expect(revert(organizationId, second.id, 'key-1')).rejects.toBeInstanceOf(
+          IdempotencyKeyReusedError,
+        );
+
+        const after = await readState(organizationId);
+        expect(after.transactions).toEqual(before.transactions);
+        expect(balancesOf(after)).toEqual(balancesOf(before));
+      });
+
+      it('replays the first result even after the transaction was reverted', async () => {
+        const { organizationId } = await setup();
+        const first = await original(organizationId);
+        const one = await revert(organizationId, first.id, 'key-1');
+
+        // Without the key, the same request is refused. With it, it is a replay.
+        await expect(revert(organizationId, first.id)).rejects.toBeInstanceOf(
+          TransactionAlreadyRevertedError,
+        );
+        const two = await revert(organizationId, first.id, 'key-1');
+
+        expect(two).toMatchObject({ replayed: true });
+        expect(two.transaction.id).toBe(one.transaction.id);
+      });
+
+      it('does not share a key with create: the key is scoped by operation', async () => {
+        const { organizationId } = await setup();
+        const { transaction: created } = await createTransaction.execute({
+          organizationId,
+          ledgerName: 'main',
+          postings: [posting('world', 'a', 5n)],
+          idempotencyKey: 'same-key',
+        });
+
+        const { transaction, replayed } = await revert(organizationId, created.id, 'same-key');
+
+        expect(replayed).toBe(false);
+        expect(transaction.id).not.toBe(created.id);
+        expect(balancesOf(await readState(organizationId))['a USD']).toBe('0');
+      });
+
+      it('leaves no key when the revert fails, so the same key can be used again', async () => {
+        const { organizationId } = await setup();
+        const first = await original(organizationId);
+        const spent = await move(organizationId, [posting('users:1', 'users:2', 900n)]);
+
+        await expect(revert(organizationId, first.id, 'key-1')).rejects.toBeInstanceOf(
+          InsufficientFundsError,
+        );
+        const keysAfterFailure = await withTenant(db, organizationId, (trx) =>
+          unwrapTenantTransaction(trx).selectFrom('idempotency_keys').selectAll().execute(),
+        );
+        // The spent money comes back, so the revert can work now.
+        await revert(organizationId, spent.id);
+        const retry = await revert(organizationId, first.id, 'key-1');
+
+        expect(keysAfterFailure).toHaveLength(0);
+        expect(retry.replayed).toBe(false);
+      });
+
+      it('reverts once when the same request is sent many times at once', async () => {
+        const { organizationId } = await setup();
+        const first = await original(organizationId);
+
+        const results = await Promise.all(
+          Array.from({ length: 8 }, () => revert(organizationId, first.id, 'key-1')),
+        );
+        const state = await readState(organizationId);
+
+        expect(results.filter((r) => !r.replayed)).toHaveLength(1);
+        expect(new Set(results.map((r) => r.transaction.id)).size).toBe(1);
+        expect(state.transactions).toHaveLength(2);
+        expect(balancesOf(state)['users:1 USD']).toBe('0');
+      });
+    });
+
+    describe('at the same time', () => {
+      it('reverts a transaction only once when it is sent many times at once', async () => {
+        const { organizationId } = await setup();
+        const first = await original(organizationId);
+
+        const results = await Promise.allSettled(
+          Array.from({ length: 8 }, () => revert(organizationId, first.id)),
+        );
+        const state = await readState(organizationId);
+
+        expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+        for (const result of results) {
+          if (result.status === 'rejected') {
+            expect(result.reason).toBeInstanceOf(TransactionAlreadyRevertedError);
+          }
+        }
+        expect(state.transactions).toHaveLength(2);
+        expect(balancesOf(state)).toEqual({
+          'platform:fees USD': '0',
+          'users:1 USD': '0',
+          'world USD': '0',
+        });
+      });
+
+      it('lets only one win when a revert and a spend want the same money', async () => {
+        for (let round = 0; round < 5; round++) {
+          const { organizationId } = await setup();
+          const first = await move(organizationId, [posting('world', 'a', 100n)]);
+
+          const [reverted, spent] = await Promise.allSettled([
+            revert(organizationId, first.id),
+            move(organizationId, [posting('a', 'b', 100n)]),
+          ]);
+          const balances = balancesOf(await readState(organizationId));
+
+          // Either the revert took the money back, or the spend moved it first.
+          expect([reverted.status, spent.status].sort()).toEqual(['fulfilled', 'rejected']);
+          const failure = reverted.status === 'rejected' ? reverted : spent;
+          expect((failure as PromiseRejectedResult).reason).toBeInstanceOf(InsufficientFundsError);
+          expect(balances['a USD']).toBe('0');
+        }
+      });
+
+      it('reverts many transactions of the same accounts, with creates, without a deadlock', async () => {
+        const { organizationId } = await setup();
+        await move(organizationId, [posting('world', 'a', 1000n), posting('world', 'b', 1000n)]);
+        const transfers = await Promise.all(
+          Array.from({ length: 10 }, (_, i) =>
+            move(organizationId, [
+              i % 2 === 0 ? posting('a', 'b', 10n) : posting('b', 'a', 10n),
+              i % 2 === 0 ? posting('b', 'a', 1n) : posting('a', 'b', 1n),
+            ]),
+          ),
+        );
+
+        // Reverts of the transfers, and new transfers, all at once.
+        await Promise.all([
+          ...transfers.map((transfer) => revert(organizationId, transfer.id)),
+          ...Array.from({ length: 10 }, (_, i) =>
+            move(organizationId, [i % 2 === 0 ? posting('b', 'a', 5n) : posting('a', 'b', 5n)]),
+          ),
+        ]);
+        const state = await readState(organizationId);
+
+        expect(balancesOf(state)).toMatchObject({ 'a USD': '1000', 'b USD': '1000' });
+        expect(state.transactions.filter((t) => t.reverted_at !== null)).toHaveLength(10);
+        // The journal has no gap and no repeat, whatever the order of the commits.
+        expect(state.logs.map((log) => log.seq)).toEqual(
+          Array.from({ length: state.logs.length }, (_, i) => String(i + 1)),
+        );
+      });
     });
   });
 });

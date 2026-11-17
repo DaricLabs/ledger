@@ -8,4 +8,5 @@
  */
 export const TRANSACTION_OPERATION = {
   CREATE: 'transactions.create',
+  REVERT: 'transactions.revert',
 } as const;

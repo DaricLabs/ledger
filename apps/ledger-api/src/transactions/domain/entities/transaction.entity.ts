@@ -5,14 +5,15 @@ import {
   type IBalanceKey,
 } from '../../../accounts/domain/entities/account-balance.entity.js';
 import { InvalidTransactionError } from '../errors/invalid-transaction.error.js';
+import { TransactionAlreadyRevertedError } from '../errors/transaction-already-reverted.error.js';
 import type { Posting } from '../value-objects/posting.vo.js';
 import {
   TRANSACTION_MAX_POSTINGS,
   TRANSACTION_REFERENCE_MAX_LENGTH,
 } from '../constants/transaction-limits.constant.js';
 
-/** The data a transaction is made of. */
-export interface ITransactionProps {
+/** The data a NEW transaction is made of. A new transaction is not reverted. */
+export interface INewTransactionProps {
   /** UUIDv7. Made by the caller (the use case), never by the database. */
   id: string;
   /** The owner organization. An opaque id from the Identity service. */
@@ -32,13 +33,23 @@ export interface ITransactionProps {
   createdAt: Date;
 }
 
+/** The data a transaction is made of, as it is saved. */
+export interface ITransactionProps extends INewTransactionProps {
+  /** When the transaction was reverted, or `null` if it was not. */
+  revertedAt: Date | null;
+  /** The transaction that reverted this one, or `null` if it was not reverted. */
+  revertedByTransactionId: string | null;
+}
+
 /**
  * A transaction: a list of postings that happen together, all or nothing.
  *
  * It is immutable, so it has getters and no setters. Getters return safe
  * values (a frozen list and copies of the dates), so callers cannot change a
  * transaction by accident. Once saved, a transaction is never changed or
- * removed: a mistake is fixed by a new transaction.
+ * removed: a mistake is fixed by a new transaction. The only thing that
+ * changes later is that a transaction gets reverted (see `reverse`), and that
+ * is saved by the repository, not by this class.
  *
  * Make a new one with `Transaction.create`, and one that is read from
  * storage with `Transaction.reconstitute`.
@@ -52,7 +63,7 @@ export class Transaction {
    * @throws {InvalidTransactionError} If there are no postings or more than
    * `TRANSACTION_MAX_POSTINGS`, or the reference is empty or too long.
    */
-  static create(props: ITransactionProps): Transaction {
+  static create(props: INewTransactionProps): Transaction {
     if (props.postings.length < 1 || props.postings.length > TRANSACTION_MAX_POSTINGS) {
       throw new InvalidTransactionError(
         `A transaction must have 1 to ${TRANSACTION_MAX_POSTINGS} postings`,
@@ -70,7 +81,7 @@ export class Transaction {
         `Reference must be 1 to ${TRANSACTION_REFERENCE_MAX_LENGTH} characters`,
       );
     }
-    return Transaction.from(props);
+    return Transaction.from({ ...props, revertedAt: null, revertedByTransactionId: null });
   }
 
   /**
@@ -95,6 +106,8 @@ export class Transaction {
         postings: Object.freeze([...props.postings]),
         postedAt: new Date(props.postedAt),
         createdAt: new Date(props.createdAt),
+        revertedAt: props.revertedAt === null ? null : new Date(props.revertedAt),
+        revertedByTransactionId: props.revertedByTransactionId,
       }),
     );
   }
@@ -128,6 +141,56 @@ export class Transaction {
   /** A new `Date` every time, because `Date` objects can be changed. */
   get createdAt(): Date {
     return new Date(this.props.createdAt);
+  }
+
+  /** When the transaction was reverted. A new `Date` every time. `null` if it was not reverted. */
+  get revertedAt(): Date | null {
+    return this.props.revertedAt === null ? null : new Date(this.props.revertedAt);
+  }
+
+  /** The transaction that reverted this one, or `null` if it was not reverted. */
+  get revertedByTransactionId(): string | null {
+    return this.props.revertedByTransactionId;
+  }
+
+  /** `true` when a later transaction undid this one. */
+  get isReverted(): boolean {
+    return this.props.revertedByTransactionId !== null;
+  }
+
+  /**
+   * Makes the NEW transaction that undoes this one: every posting goes the
+   * other way, in the opposite order.
+   *
+   * The order is reversed on purpose. Postings are checked one after the
+   * other, so for `a -> b` and then `b -> c`, the money must go back from `c`
+   * to `b` first, and only then from `b` to `a`. In the same order, `b` would
+   * have to pay `a` before it got the money back.
+   *
+   * The new transaction has no reference, because a reference belongs to one
+   * transaction. It is not saved and it does not apply anything. The caller
+   * applies it like any new transaction (`touchedBalances` and `applyTo`),
+   * which fails if the money was spent in the meantime. This transaction is
+   * not changed: the caller saves that it was reverted.
+   *
+   * @param reversal The `id` of the new transaction, and `at`, the time it
+   * happened and was saved.
+   * @throws {TransactionAlreadyRevertedError} If this transaction was
+   * reverted before.
+   */
+  reverse(reversal: { id: string; at: Date }): Transaction {
+    if (this.isReverted) {
+      throw new TransactionAlreadyRevertedError(this.props.id);
+    }
+    return Transaction.create({
+      id: reversal.id,
+      organizationId: this.props.organizationId,
+      ledgerId: this.props.ledgerId,
+      reference: null,
+      postings: this.props.postings.map((posting) => posting.reversed()).reverse(),
+      postedAt: reversal.at,
+      createdAt: reversal.at,
+    });
   }
 
   /**

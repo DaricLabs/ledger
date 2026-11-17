@@ -96,6 +96,8 @@ function setup(held: Held = {}) {
       calls.push('insert');
     }),
     findById: vi.fn<ITransactionRepository['findById']>(),
+    lockById: vi.fn<ITransactionRepository['lockById']>(),
+    markReverted: vi.fn<ITransactionRepository['markReverted']>(),
     findPage: vi.fn<ITransactionRepository['findPage']>(),
   };
   const logs = {

@@ -12,11 +12,13 @@ import { LedgerNotFoundError } from '../../../ledgers/domain/errors/ledger-not-f
 import { CreateTransactionUseCase } from '../../application/use-cases/create-transaction.use-case.js';
 import { GetTransactionUseCase } from '../../application/use-cases/get-transaction.use-case.js';
 import { ListTransactionsUseCase } from '../../application/use-cases/list-transactions.use-case.js';
+import { RevertTransactionUseCase } from '../../application/use-cases/revert-transaction.use-case.js';
 import { InsufficientFundsError } from '../../../accounts/domain/errors/insufficient-funds.error.js';
 import { IdempotencyKeyReusedError } from '../../../idempotency/domain/errors/idempotency-key-reused.error.js';
 import { InvalidPostingError } from '../../domain/errors/invalid-posting.error.js';
 import { InvalidTransactionError } from '../../domain/errors/invalid-transaction.error.js';
 import { Posting } from '../../domain/value-objects/posting.vo.js';
+import { TransactionAlreadyRevertedError } from '../../domain/errors/transaction-already-reverted.error.js';
 import { TransactionDomainError } from '../../domain/errors/transaction-domain.error.js';
 import { TransactionNotFoundError } from '../../domain/errors/transaction-not-found.error.js';
 import { TransactionReferenceAlreadyExistsError } from '../../domain/errors/transaction-reference-already-exists.error.js';
@@ -30,6 +32,7 @@ describe('TransactionsController', () => {
   const execute = vi.fn<CreateTransactionUseCase['execute']>();
   const executeGet = vi.fn<GetTransactionUseCase['execute']>();
   const executeList = vi.fn<ListTransactionsUseCase['execute']>();
+  const executeRevert = vi.fn<RevertTransactionUseCase['execute']>();
   const organizationId = randomUUIDv7();
   let app: INestApplication<App>;
 
@@ -45,6 +48,7 @@ describe('TransactionsController', () => {
         { provide: CreateTransactionUseCase, useValue: { execute } },
         { provide: GetTransactionUseCase, useValue: { execute: executeGet } },
         { provide: ListTransactionsUseCase, useValue: { execute: executeList } },
+        { provide: RevertTransactionUseCase, useValue: { execute: executeRevert } },
       ],
     }).compile();
     app = moduleRef.createNestApplication();
@@ -59,6 +63,7 @@ describe('TransactionsController', () => {
     execute.mockReset();
     executeGet.mockReset();
     executeList.mockReset();
+    executeRevert.mockReset();
     // Builds a transaction from the input, like the real use case does.
     execute.mockImplementation(async (input) => ({
       replayed: false,
@@ -102,6 +107,8 @@ describe('TransactionsController', () => {
         postings: [{ source: 'world', destination: 'users:1', asset: 'USD', amount: '1050' }],
         postedAt: '2026-11-07T10:00:00.000Z',
         createdAt: '2026-11-07T10:00:01.000Z',
+        revertedAt: null,
+        revertedByTransactionId: null,
       });
     });
 
@@ -358,6 +365,8 @@ describe('TransactionsController', () => {
         ],
         postedAt: new Date('2026-11-07T10:00:00.000Z'),
         createdAt: new Date('2026-11-07T10:00:01.000Z'),
+        revertedAt: null,
+        revertedByTransactionId: null,
       });
 
     /** `org` is the header value. Pass `null` to send no header at all. */
@@ -381,6 +390,8 @@ describe('TransactionsController', () => {
         postings: [{ source: 'world', destination: 'users:1', asset: 'USD', amount: '1050' }],
         postedAt: '2026-11-07T10:00:00.000Z',
         createdAt: '2026-11-07T10:00:01.000Z',
+        revertedAt: null,
+        revertedByTransactionId: null,
       });
     });
 
@@ -456,6 +467,8 @@ describe('TransactionsController', () => {
         ],
         postedAt: new Date(postedAt),
         createdAt: new Date(postedAt),
+        revertedAt: null,
+        revertedByTransactionId: null,
       });
 
     const first = makeTransaction(
@@ -489,6 +502,8 @@ describe('TransactionsController', () => {
               postings: [{ source: 'world', destination: 'users:1', asset: 'USD', amount: '1050' }],
               postedAt: '2026-11-07T11:00:00.000Z',
               createdAt: '2026-11-07T11:00:00.000Z',
+              revertedAt: null,
+              revertedByTransactionId: null,
             },
           ],
           hasMore: false,
@@ -625,6 +640,177 @@ describe('TransactionsController', () => {
         expect(res.body.errorCode).toBe('VALIDATION');
         expect(res.body.details.map((d: { path: string }) => d.path)).toContain(path);
         expect(executeList).not.toHaveBeenCalled();
+      });
+    });
+  });
+
+  describe('POST /ledgers/:ledgerName/transactions/:transactionId/revert', () => {
+    const transactionId = '0190a5d4-7b3c-7abc-8def-0123456789ab';
+    const reversalId = '0190a5d4-7b3c-7abc-8def-0123456789cd';
+
+    /** The new transaction that the use case returns: the postings of the original, reversed. */
+    const reversal = () =>
+      Transaction.create({
+        id: reversalId,
+        organizationId,
+        ledgerId: '0190a5d4-7b3c-7abc-8def-0123456789ac',
+        reference: null,
+        postings: [
+          Posting.of(
+            AccountAddress.of('users:1'),
+            AccountAddress.of('world'),
+            Money.of(AssetCode.of('USD'), 1050n),
+          ),
+        ],
+        postedAt: new Date('2026-11-08T10:00:00.000Z'),
+        createdAt: new Date('2026-11-08T10:00:00.000Z'),
+      });
+
+    beforeEach(() => {
+      executeRevert.mockImplementation(async () => ({ transaction: reversal(), replayed: false }));
+    });
+
+    /** `org` is the header value. Pass `null` to send no header at all. */
+    const revert = (
+      id: string = transactionId,
+      ledger = 'main',
+      org: string | null = organizationId,
+    ) => {
+      const req = request(app.getHttpServer()).post(`/ledgers/${ledger}/transactions/${id}/revert`);
+      return org === null ? req : req.set(ORGANIZATION_ID_HEADER, org);
+    };
+
+    it('returns 201 with the NEW transaction, in the same shape as create', async () => {
+      const res = await revert().expect(201);
+
+      expect(res.body).toEqual({
+        id: reversalId,
+        reference: null,
+        postings: [{ source: 'users:1', destination: 'world', asset: 'USD', amount: '1050' }],
+        postedAt: '2026-11-08T10:00:00.000Z',
+        createdAt: '2026-11-08T10:00:00.000Z',
+        revertedAt: null,
+        revertedByTransactionId: null,
+      });
+    });
+
+    it('sends the URL of the new transaction in the Location header, not the old one', async () => {
+      const res = await revert(transactionId, 'my-ledger').expect(201);
+
+      expect(res.headers.location).toBe(`/ledgers/my-ledger/transactions/${reversalId}`);
+    });
+
+    it('gives the use case the organization, the ledger name, the id and no key', async () => {
+      await revert(transactionId, 'my-ledger').expect(201);
+
+      expect(executeRevert).toHaveBeenCalledExactlyOnceWith({
+        organizationId,
+        ledgerName: 'my-ledger',
+        transactionId,
+        idempotencyKey: undefined,
+      });
+    });
+
+    describe('Idempotency-Key', () => {
+      it('gives the key to the use case', async () => {
+        await revert().set('Idempotency-Key', 'revert 42/retry#1').expect(201);
+
+        expect(executeRevert.mock.calls[0]?.[0].idempotencyKey).toBe('revert 42/retry#1');
+      });
+
+      it('sends no Idempotent-Replayed header for a first call', async () => {
+        const res = await revert().set('Idempotency-Key', 'key-1').expect(201);
+
+        expect(res.headers['idempotent-replayed']).toBeUndefined();
+      });
+
+      it('answers a replay with 201, the same body and Location, and Idempotent-Replayed: true', async () => {
+        const first = await revert().set('Idempotency-Key', 'key-1').expect(201);
+        executeRevert.mockResolvedValueOnce({ transaction: reversal(), replayed: true });
+
+        const res = await revert().set('Idempotency-Key', 'key-1').expect(201);
+
+        expect(res.body).toEqual(first.body);
+        expect(res.headers.location).toBe(first.headers.location);
+        expect(res.headers['idempotent-replayed']).toBe('true');
+      });
+
+      it('refuses a key with a wrong shape with 400 VALIDATION', async () => {
+        const res = await revert().set('Idempotency-Key', 'k'.repeat(256)).expect(400);
+
+        expect(res.body.errorCode).toBe('VALIDATION');
+        expect(executeRevert).not.toHaveBeenCalled();
+      });
+
+      it('turns IdempotencyKeyReusedError into 422 IDEMPOTENCY_KEY_REUSED', async () => {
+        executeRevert.mockRejectedValueOnce(new IdempotencyKeyReusedError());
+
+        const res = await revert().set('Idempotency-Key', 'key-1').expect(422);
+
+        expect(res.body.errorCode).toBe('IDEMPOTENCY_KEY_REUSED');
+      });
+    });
+
+    describe('errors', () => {
+      it.each([
+        ['LedgerNotFoundError', new LedgerNotFoundError('main'), 404, 'LEDGER_NOT_FOUND'],
+        [
+          'TransactionNotFoundError',
+          new TransactionNotFoundError(transactionId),
+          404,
+          'TRANSACTION_NOT_FOUND',
+        ],
+        [
+          'TransactionAlreadyRevertedError',
+          new TransactionAlreadyRevertedError(transactionId),
+          409,
+          'TRANSACTION_ALREADY_REVERTED',
+        ],
+        [
+          'InsufficientFundsError',
+          new InsufficientFundsError('users:1', 'USD', '10', '1050'),
+          422,
+          'INSUFFICIENT_FUNDS',
+        ],
+      ])('turns %s into %i %s', async (_name, error, status, code) => {
+        executeRevert.mockRejectedValueOnce(error);
+
+        const res = await revert().expect(status as number);
+
+        expect(res.body).toEqual({ errorCode: code, errorMessage: error.message });
+      });
+
+      it('does not repeat the id in the already reverted message', async () => {
+        executeRevert.mockRejectedValueOnce(new TransactionAlreadyRevertedError(transactionId));
+
+        const res = await revert().expect(409);
+
+        expect(res.body.errorMessage).not.toContain(transactionId);
+      });
+    });
+
+    describe('validation and tenant', () => {
+      it.each([
+        ['not a uuid', 'abc'],
+        ['a UUIDv4', '3b241101-e2bb-4255-8caf-4136c566a962'],
+      ])('returns 400 VALIDATION when the id is %s', async (_label, id) => {
+        const res = await revert(id).expect(400);
+
+        expect(res.body.errorCode).toBe('VALIDATION');
+        expect(executeRevert).not.toHaveBeenCalled();
+      });
+
+      it('returns 400 VALIDATION for a ledger name with a wrong shape', async () => {
+        const res = await revert(transactionId, 'Bad_Name').expect(400);
+
+        expect(res.body.errorCode).toBe('VALIDATION');
+        expect(executeRevert).not.toHaveBeenCalled();
+      });
+
+      it('refuses a request without the organization header', async () => {
+        await revert(transactionId, 'main', null).expect(400);
+
+        expect(executeRevert).not.toHaveBeenCalled();
       });
     });
   });

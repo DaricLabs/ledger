@@ -3,6 +3,7 @@ import { ValueObjectError } from '@ledger/domain';
 import { InvalidPostingError } from '../../domain/errors/invalid-posting.error.js';
 import { InvalidTransactionError } from '../../domain/errors/invalid-transaction.error.js';
 import type { TransactionDomainError } from '../../domain/errors/transaction-domain.error.js';
+import { TransactionAlreadyRevertedError } from '../../domain/errors/transaction-already-reverted.error.js';
 import { TransactionNotFoundError } from '../../domain/errors/transaction-not-found.error.js';
 import { TransactionReferenceAlreadyExistsError } from '../../domain/errors/transaction-reference-already-exists.error.js';
 
@@ -27,7 +28,10 @@ function statusOf(error: TransactionDomainError | ValueObjectError): HttpStatus 
   if (error instanceof TransactionNotFoundError) {
     return HttpStatus.NOT_FOUND;
   }
-  if (error instanceof TransactionReferenceAlreadyExistsError) {
+  if (
+    error instanceof TransactionReferenceAlreadyExistsError ||
+    error instanceof TransactionAlreadyRevertedError
+  ) {
     return HttpStatus.CONFLICT;
   }
   if (
