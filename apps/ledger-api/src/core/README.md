@@ -14,7 +14,7 @@ accounts or transactions. Business features live next to this folder in `src/`.
 | `logging/`    | Pino setup, request ids, log levels                        |
 | `pagination/` | Page size and cursor helpers for list endpoints            |
 | `tenant/`     | `TenantGuard` and `@OrganizationId()`                      |
-| `validation/` | Global schema pipe, so `@Body({ schema })` works           |
+| `validation/` | Global schema pipe (`@Body({ schema })`), metadata schemas |
 
 ## Rules
 

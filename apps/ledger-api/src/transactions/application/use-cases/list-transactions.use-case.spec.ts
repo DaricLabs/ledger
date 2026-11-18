@@ -1,5 +1,5 @@
 import type { TenantTransaction } from '@ledger/database';
-import { AccountAddress, AssetCode, Money } from '@ledger/domain';
+import { AccountAddress, AssetCode, Metadata, Money } from '@ledger/domain';
 import type { ITenantTransactionRunner } from '../../../journal/application/ports/tenant-transaction-runner.port.js';
 import type { ILedgerRepository } from '../../../ledgers/application/ports/ledger-repository.port.js';
 import { Ledger } from '../../../ledgers/domain/entities/ledger.entity.js';
@@ -20,7 +20,7 @@ const storedLedger = Ledger.reconstitute({
   id: LEDGER_ID,
   organizationId: ORG_ID,
   name: 'main',
-  metadata: {},
+  metadata: Metadata.reconstitute({}),
   createdAt: new Date('2026-11-08T10:00:00.000Z'),
 });
 

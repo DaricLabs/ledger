@@ -5,16 +5,18 @@ TypeScript: no framework, no database, no HTTP.
 
 ## What is inside
 
-| Folder          | Files end with | What is inside                                                    |
-| :-------------- | :------------- | :---------------------------------------------------------------- |
-| `value-objects` | `.vo.ts`       | `AssetCode`, `AccountAddress` (with the `world` address), `Money` |
-| `errors`        | `.error.ts`    | `DomainError`, `ValueObjectError`, and the errors of the above    |
+| Folder          | Files end with | What is inside                                                                |
+| :-------------- | :------------- | :---------------------------------------------------------------------------- |
+| `value-objects` | `.vo.ts`       | `AssetCode`, `AccountAddress` (with the `world` address), `Money`, `Metadata` |
+| `errors`        | `.error.ts`    | `DomainError`, `ValueObjectError`, and the errors of the above                |
 
 - `DomainError` is the base class of every business error. It needs a `code`.
 - `ValueObjectError` is the base class of the errors of the value objects, so
   one place can handle all of them.
 - `Money` is an exact amount (`bigint`) of one asset, within the range of the
   database columns.
+- `Metadata` is free-form string key/value data that a client attaches to a
+  record. It owns the rules and the size limits (`METADATA_LIMITS`).
 - `index.ts` is the only public entry. Apps import from `@ledger/domain`, never
   from a file inside it.
 

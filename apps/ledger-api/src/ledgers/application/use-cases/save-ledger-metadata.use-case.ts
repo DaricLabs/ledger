@@ -34,8 +34,8 @@ export interface ISaveLedgerMetadataInput {
  * published: no state changed, so there is nothing to record.
  *
  * @throws LedgerNotFoundError If the organization has no ledger with this name.
- * @throws InvalidLedgerMetadataError If the metadata breaks the domain rules.
- * @throws LedgerMetadataLimitExceededError If the ledger would have too many
+ * @throws InvalidMetadataError If the metadata breaks the domain rules.
+ * @throws MetadataLimitExceededError If the ledger would have too many
  * keys, or a key, a value or the total would be too big. The size is checked on
  * the locked, stored metadata, so many small saves cannot pass the limits.
  * The presentation layer turns these errors into HTTP responses.

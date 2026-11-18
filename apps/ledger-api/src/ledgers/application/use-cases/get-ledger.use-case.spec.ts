@@ -1,3 +1,4 @@
+import { Metadata } from '@ledger/domain';
 import type { TenantTransaction } from '@ledger/database';
 import { Ledger } from '../../domain/entities/ledger.entity.js';
 import { LedgerNotFoundError } from '../../domain/errors/ledger-not-found.error.js';
@@ -12,7 +13,7 @@ const storedLedger = Ledger.reconstitute({
   id: LEDGER_ID,
   organizationId: ORG_ID,
   name: 'main',
-  metadata: { env: 'prod' },
+  metadata: Metadata.reconstitute({ env: 'prod' }),
   createdAt: new Date('2026-11-04T10:00:00.000Z'),
 });
 

@@ -1,5 +1,11 @@
 import type { TenantTransaction } from '@ledger/database';
-import { AccountAddress, AssetCode, InvalidAccountAddressError, Money } from '@ledger/domain';
+import {
+  AccountAddress,
+  AssetCode,
+  InvalidAccountAddressError,
+  Metadata,
+  Money,
+} from '@ledger/domain';
 import type { ITenantTransactionRunner } from '../../../journal/application/ports/tenant-transaction-runner.port.js';
 import type { ILedgerRepository } from '../../../ledgers/application/ports/ledger-repository.port.js';
 import { LedgerNotFoundError } from '../../../ledgers/domain/errors/ledger-not-found.error.js';
@@ -16,7 +22,7 @@ const storedLedger = Ledger.reconstitute({
   id: LEDGER_ID,
   organizationId: ORG_ID,
   name: 'main',
-  metadata: {},
+  metadata: Metadata.reconstitute({}),
   createdAt: new Date('2026-11-09T10:00:00.000Z'),
 });
 

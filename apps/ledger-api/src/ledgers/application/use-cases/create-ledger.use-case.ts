@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { Metadata } from '@ledger/domain';
 import { LEDGER_LOG_TYPE } from '../../domain/constants/ledger-log-type.constant.js';
 import { Ledger } from '../../domain/entities/ledger.entity.js';
 import {
@@ -33,10 +34,9 @@ export interface ICreateLedgerInput {
  * three are saved or none.
  *
  * The domain checks the name and metadata before any transaction is opened.
- * Domain errors (`InvalidLedgerNameError`, `InvalidLedgerMetadataError`,
- * `LedgerMetadataLimitExceededError`, `LedgerAlreadyExistsError`) pass through
- * unchanged. The presentation layer
- * turns them into HTTP responses.
+ * Domain errors (`InvalidLedgerNameError`, `InvalidMetadataError`,
+ * `MetadataLimitExceededError`, `LedgerAlreadyExistsError`) pass through
+ * unchanged. The presentation layer turns them into HTTP responses.
  */
 @Injectable()
 export class CreateLedgerUseCase {
@@ -53,7 +53,7 @@ export class CreateLedgerUseCase {
       id: this.ids.next(),
       organizationId: input.organizationId,
       name: input.name,
-      metadata: input.metadata,
+      metadata: Metadata.of(input.metadata),
       createdAt: new Date(),
     });
 
@@ -63,7 +63,7 @@ export class CreateLedgerUseCase {
       await this.logs.append(trx, {
         ledgerId: ledger.id,
         type: LEDGER_LOG_TYPE.CREATED,
-        payload: { name: ledger.name, metadata: ledger.metadata },
+        payload: { name: ledger.name, metadata: ledger.metadata.entries },
       });
       await this.outbox.append(trx, {
         ledgerId: ledger.id,
@@ -74,7 +74,7 @@ export class CreateLedgerUseCase {
           ledgerId: ledger.id,
           organizationId: ledger.organizationId,
           name: ledger.name,
-          metadata: ledger.metadata,
+          metadata: ledger.metadata.entries,
           createdAt: ledger.createdAt.toISOString(),
         },
       });

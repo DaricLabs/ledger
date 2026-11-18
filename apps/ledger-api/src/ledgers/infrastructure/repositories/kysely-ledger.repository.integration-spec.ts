@@ -1,3 +1,4 @@
+import { Metadata } from '@ledger/domain';
 import {
   createDb,
   sql,
@@ -32,7 +33,7 @@ afterAll(() => db.destroy());
 
 /** Makes a valid ledger. Pass `id` to force an id clash. */
 const makeLedger = (organizationId: string, name: string, id = ids.next()) =>
-  Ledger.create({ id, organizationId, name, metadata: {}, createdAt: new Date() });
+  Ledger.create({ id, organizationId, name, metadata: Metadata.of({}), createdAt: new Date() });
 
 describe('KyselyLedgerRepository.insert', () => {
   it('maps a duplicate name to LedgerAlreadyExistsError', async () => {
@@ -72,7 +73,7 @@ describe('KyselyLedgerRepository.findByName', () => {
       id: ids.next(),
       organizationId,
       name: 'main',
-      metadata: { env: 'prod', team: 'payments' },
+      metadata: Metadata.of({ env: 'prod', team: 'payments' }),
       createdAt: new Date('2026-11-04T10:00:00.123Z'),
     });
     await withTenant(db, organizationId, (trx) => repository.insert(trx, saved));
@@ -83,7 +84,7 @@ describe('KyselyLedgerRepository.findByName', () => {
     expect(found?.id).toBe(saved.id);
     expect(found?.organizationId).toBe(organizationId);
     expect(found?.name).toBe('main');
-    expect(found?.metadata).toEqual({ env: 'prod', team: 'payments' });
+    expect(found?.metadata.entries).toEqual({ env: 'prod', team: 'payments' });
     expect(found?.createdAt).toEqual(saved.createdAt);
   });
 
@@ -131,7 +132,7 @@ describe('KyselyLedgerRepository.findByNameForUpdate', () => {
       id: ids.next(),
       organizationId,
       name: 'main',
-      metadata: { env: 'prod' },
+      metadata: Metadata.of({ env: 'prod' }),
       createdAt: new Date('2026-11-05T10:00:00.123Z'),
     });
     await withTenant(db, organizationId, (trx) => repository.insert(trx, saved));
@@ -144,7 +145,7 @@ describe('KyselyLedgerRepository.findByNameForUpdate', () => {
     expect(found?.id).toBe(saved.id);
     expect(found?.organizationId).toBe(organizationId);
     expect(found?.name).toBe('main');
-    expect(found?.metadata).toEqual({ env: 'prod' });
+    expect(found?.metadata.entries).toEqual({ env: 'prod' });
     expect(found?.createdAt).toEqual(saved.createdAt);
   });
 
@@ -254,7 +255,7 @@ describe('KyselyLedgerRepository.updateMetadata', () => {
       id: ids.next(),
       organizationId,
       name,
-      metadata,
+      metadata: Metadata.of(metadata),
       createdAt: new Date('2026-11-05T10:00:00.123Z'),
     });
     await withTenant(db, organizationId, (trx) => repository.insert(trx, ledger));
@@ -270,7 +271,7 @@ describe('KyselyLedgerRepository.updateMetadata', () => {
     );
     const found = await withTenant(db, organizationId, (trx) => repository.findByName(trx, 'main'));
 
-    expect(found?.metadata).toEqual({ env: 'staging', tier: '1' });
+    expect(found?.metadata.entries).toEqual({ env: 'staging', tier: '1' });
     expect(found?.id).toBe(saved.id);
     expect(found?.name).toBe('main');
     expect(found?.createdAt).toEqual(saved.createdAt);
@@ -285,7 +286,7 @@ describe('KyselyLedgerRepository.updateMetadata', () => {
     );
     const found = await withTenant(db, organizationId, (trx) => repository.findByName(trx, 'main'));
 
-    expect(found?.metadata).toEqual({ team: 'pay' });
+    expect(found?.metadata.entries).toEqual({ team: 'pay' });
   });
 
   it('can save empty metadata', async () => {
@@ -297,7 +298,7 @@ describe('KyselyLedgerRepository.updateMetadata', () => {
     );
     const found = await withTenant(db, organizationId, (trx) => repository.findByName(trx, 'main'));
 
-    expect(found?.metadata).toEqual({});
+    expect(found?.metadata.entries).toEqual({});
   });
 
   it('keeps quotes, unicode and long values as they are', async () => {
@@ -314,7 +315,7 @@ describe('KyselyLedgerRepository.updateMetadata', () => {
     );
     const found = await withTenant(db, organizationId, (trx) => repository.findByName(trx, 'main'));
 
-    expect(found?.metadata).toEqual(metadata);
+    expect(found?.metadata.entries).toEqual(metadata);
   });
 
   it('does not change another ledger of the same organization', async () => {
@@ -329,7 +330,7 @@ describe('KyselyLedgerRepository.updateMetadata', () => {
       repository.findByName(trx, 'other'),
     );
 
-    expect(other?.metadata).toEqual({ env: 'dev' });
+    expect(other?.metadata.entries).toEqual({ env: 'dev' });
   });
 
   it('throws, and changes nothing, for a ledger of another organization', async () => {
@@ -345,7 +346,7 @@ describe('KyselyLedgerRepository.updateMetadata', () => {
     ).rejects.toThrow('Expected to update 1 ledger row, but updated 0');
 
     const found = await withTenant(db, owner, (trx) => repository.findByName(trx, 'main'));
-    expect(found?.metadata).toEqual({ env: 'prod' });
+    expect(found?.metadata.entries).toEqual({ env: 'prod' });
   });
 
   it('throws for a ledger that was never saved', async () => {
@@ -379,7 +380,7 @@ describe('KyselyLedgerRepository.findPage', () => {
       id: ids.next(),
       organizationId,
       name: 'main',
-      metadata: { env: 'prod', team: 'payments' },
+      metadata: Metadata.of({ env: 'prod', team: 'payments' }),
       createdAt: new Date('2026-11-04T10:00:00.123Z'),
     });
     await withTenant(db, organizationId, (trx) => repository.insert(trx, saved));
@@ -392,7 +393,7 @@ describe('KyselyLedgerRepository.findPage', () => {
     expect(found?.id).toBe(saved.id);
     expect(found?.organizationId).toBe(organizationId);
     expect(found?.name).toBe('main');
-    expect(found?.metadata).toEqual({ env: 'prod', team: 'payments' });
+    expect(found?.metadata.entries).toEqual({ env: 'prod', team: 'payments' });
     expect(found?.createdAt).toEqual(saved.createdAt);
   });
 

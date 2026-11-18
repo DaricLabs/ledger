@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { Metadata, type MetadataEntries } from '@ledger/domain';
 import { isUniqueViolation, unwrapTenantTransaction } from '@ledger/database/storage';
 import type { TenantTransaction } from '@ledger/database';
 import type {
@@ -7,7 +8,7 @@ import type {
   ILedgerRepository,
 } from '../../application/ports/ledger-repository.port.js';
 import { LedgerAlreadyExistsError } from '../../domain/errors/ledger-already-exists.error.js';
-import { Ledger, type LedgerMetadata } from '../../domain/entities/ledger.entity.js';
+import { Ledger } from '../../domain/entities/ledger.entity.js';
 
 /** Postgres name of `unique (organization_id, name)` on `ledgers`. */
 const NAME_UNIQUE_CONSTRAINT = 'ledgers_organization_id_name_key';
@@ -26,7 +27,7 @@ export class KyselyLedgerRepository implements ILedgerRepository {
           id: ledger.id,
           organization_id: ledger.organizationId,
           name: ledger.name,
-          metadata: ledger.metadata,
+          metadata: ledger.metadata.entries,
           created_at: ledger.createdAt,
         })
         .execute();
@@ -72,7 +73,7 @@ export class KyselyLedgerRepository implements ILedgerRepository {
     // update, and the only part of a ledger that changes.
     const result = await unwrapTenantTransaction(trx)
       .updateTable('ledgers')
-      .set({ metadata: ledger.metadata })
+      .set({ metadata: ledger.metadata.entries })
       .where('id', '=', ledger.id)
       .executeTakeFirstOrThrow();
 
@@ -119,9 +120,9 @@ function toLedger(row: ILedgerRow): Ledger {
     id: row.id,
     organizationId: row.organization_id,
     name: row.name,
-    // Safe cast: every ledger is saved through `Ledger.create`, which allows
-    // string values only. The database itself only checks "a JSON object".
-    metadata: row.metadata as LedgerMetadata,
+    // Safe cast: every ledger is saved from a `Metadata`, which allows string
+    // values only. The database itself only checks "a JSON object".
+    metadata: Metadata.reconstitute(row.metadata as MetadataEntries),
     createdAt: row.created_at,
   });
 }

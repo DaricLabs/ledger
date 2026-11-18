@@ -1,3 +1,4 @@
+import { Metadata } from '@ledger/domain';
 import type { TenantTransaction } from '@ledger/database';
 import { Ledger } from '../../domain/entities/ledger.entity.js';
 import type { ILedgerPage, ILedgerRepository } from '../ports/ledger-repository.port.js';
@@ -12,7 +13,7 @@ const storedPage: ILedgerPage = {
       id: '0190a5d4-7b3c-7abc-8def-0123456789ac',
       organizationId: ORG_ID,
       name: 'main',
-      metadata: {},
+      metadata: Metadata.reconstitute({}),
       createdAt: new Date('2026-11-04T10:00:00.000Z'),
     }),
   ],

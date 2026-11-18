@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ledgerMetadataSchema } from './ledger-metadata.dto.js';
+import { metadataSchema } from '../../../core/validation/metadata.dto.js';
 import { ledgerNameSchema } from './ledger-name.dto.js';
 
 /**
@@ -15,7 +15,7 @@ import { ledgerNameSchema } from './ledger-name.dto.js';
  */
 export const createLedgerSchema = z.strictObject({
   name: ledgerNameSchema,
-  metadata: ledgerMetadataSchema.default({}),
+  metadata: metadataSchema.default({}),
 });
 
 export type CreateLedgerDto = z.infer<typeof createLedgerSchema>;

@@ -1,11 +1,11 @@
-import { LedgerMetadataLimitExceededError } from './ledger-metadata-limit-exceeded.error.js';
+import { MetadataLimitExceededError } from './metadata-limit-exceeded.error.js';
 
-describe('LedgerMetadataLimitExceededError', () => {
+describe('MetadataLimitExceededError', () => {
   it('is an Error that carries the broken limit', () => {
-    const error = new LedgerMetadataLimitExceededError('entries', 128);
+    const error = new MetadataLimitExceededError('entries', 128);
 
     expect(error).toBeInstanceOf(Error);
-    expect(error.name).toBe('LedgerMetadataLimitExceededError');
+    expect(error.name).toBe('MetadataLimitExceededError');
     expect(error.dimension).toBe('entries');
     expect(error.limit).toBe(128);
   });
@@ -21,13 +21,13 @@ describe('LedgerMetadataLimitExceededError', () => {
       'Metadata can be at most 65536 bytes in total (keys and values together)',
     ],
   ] as const)('says which limit it is for %s', (dimension, limit, key, message) => {
-    expect(new LedgerMetadataLimitExceededError(dimension, limit, key).message).toBe(message);
+    expect(new MetadataLimitExceededError(dimension, limit, key).message).toBe(message);
   });
 
   it('does not repeat a key that is too long', () => {
     // The caller never passes a key for the `key` dimension, but a key given
     // by mistake must not reach the message either.
-    const error = new LedgerMetadataLimitExceededError('key', 256, 'k'.repeat(300));
+    const error = new MetadataLimitExceededError('key', 256, 'k'.repeat(300));
 
     expect(error.message).not.toContain('kkk');
   });
