@@ -1,5 +1,5 @@
 import type { TenantTransaction } from '@ledger/database';
-import { AccountAddress, AssetCode, Money } from '@ledger/domain';
+import { AccountAddress, AssetCode, Metadata, Money } from '@ledger/domain';
 import {
   AccountBalance,
   balanceKeyText,
@@ -32,7 +32,7 @@ const storedLedger = Ledger.reconstitute({
   id: LEDGER_ID,
   organizationId: ORG_ID,
   name: 'main',
-  metadata: {},
+  metadata: Metadata.reconstitute({}),
   createdAt: new Date('2026-11-04T10:00:00.000Z'),
 });
 

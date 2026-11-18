@@ -1,5 +1,6 @@
+import type { MetadataEntries } from '@ledger/domain';
 import type { ILedgerPage } from '../../application/ports/ledger-repository.port.js';
-import type { Ledger, LedgerMetadata } from '../../domain/entities/ledger.entity.js';
+import type { Ledger } from '../../domain/entities/ledger.entity.js';
 import { encodeLedgerCursor } from './ledger-page-cursor.dto.js';
 
 /**
@@ -9,7 +10,7 @@ import { encodeLedgerCursor } from './ledger-page-cursor.dto.js';
 export interface ILedgerResponse {
   id: string;
   name: string;
-  metadata: LedgerMetadata;
+  metadata: MetadataEntries;
   /** ISO 8601 date in UTC, like `2026-11-03T10:00:00.000Z`. */
   createdAt: string;
 }
@@ -18,7 +19,7 @@ export function toLedgerResponseDto(ledger: Ledger): ILedgerResponse {
   return {
     id: ledger.id,
     name: ledger.name,
-    metadata: ledger.metadata,
+    metadata: ledger.metadata.entries,
     createdAt: ledger.createdAt.toISOString(),
   };
 }

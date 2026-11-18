@@ -1,6 +1,8 @@
 import { DomainError } from './domain.error.js';
 import { InvalidAccountAddressError } from './invalid-account-address.error.js';
 import { InvalidAssetCodeError } from './invalid-asset-code.error.js';
+import { InvalidMetadataError } from './invalid-metadata.error.js';
+import { MetadataLimitExceededError } from './metadata-limit-exceeded.error.js';
 import { MoneyAmountOutOfRangeError } from './money-amount-out-of-range.error.js';
 import { MoneyAssetMismatchError } from './money-asset-mismatch.error.js';
 import { ValueObjectError } from './value-object.error.js';
@@ -19,6 +21,12 @@ const valueObjectErrors: [string, () => ValueObjectError, string][] = [
     'MoneyAssetMismatchError',
     () => new MoneyAssetMismatchError('USD', 'EUR'),
     'MONEY_ASSET_MISMATCH',
+  ],
+  ['InvalidMetadataError', () => new InvalidMetadataError('bad metadata'), 'INVALID_METADATA'],
+  [
+    'MetadataLimitExceededError',
+    () => new MetadataLimitExceededError('entries', 128),
+    'METADATA_LIMIT_EXCEEDED',
   ],
 ];
 

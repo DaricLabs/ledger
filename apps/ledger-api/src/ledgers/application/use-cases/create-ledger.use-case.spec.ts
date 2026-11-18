@@ -1,10 +1,10 @@
+import { MetadataLimitExceededError } from '@ledger/domain';
 import type { TenantTransaction } from '@ledger/database';
 import type { ILedgerRepository } from '../ports/ledger-repository.port.js';
 import type { ILedgerLogWriter } from '../../../journal/application/ports/ledger-log-writer.port.js';
 import type { IOutboxWriter } from '../../../journal/application/ports/outbox-writer.port.js';
 import type { ITenantTransactionRunner } from '../../../journal/application/ports/tenant-transaction-runner.port.js';
 import { InvalidLedgerNameError } from '../../domain/errors/invalid-ledger-name.error.js';
-import { LedgerMetadataLimitExceededError } from '../../domain/errors/ledger-metadata-limit-exceeded.error.js';
 import { CreateLedgerUseCase } from './create-ledger.use-case.js';
 
 const ORG_ID = '0190a5d4-7b3c-7abc-8def-0123456789ab';
@@ -78,7 +78,7 @@ describe('CreateLedgerUseCase', () => {
     expect(ledger.id).toBe(LEDGER_ID);
     expect(ledger.organizationId).toBe(ORG_ID);
     expect(ledger.name).toBe('main');
-    expect(ledger.metadata).toEqual({ env: 'prod' });
+    expect(ledger.metadata.entries).toEqual({ env: 'prod' });
     expect(ledger.createdAt).toEqual(NOW);
   });
 
@@ -162,7 +162,7 @@ describe('CreateLedgerUseCase', () => {
     const metadata = { big: 'x'.repeat(16 * 1024 + 1) };
 
     await expect(useCase.execute({ ...input, metadata })).rejects.toThrow(
-      LedgerMetadataLimitExceededError,
+      MetadataLimitExceededError,
     );
     expect(transactions.run).not.toHaveBeenCalled();
   });

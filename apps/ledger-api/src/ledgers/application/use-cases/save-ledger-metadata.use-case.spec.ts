@@ -1,6 +1,5 @@
+import { InvalidMetadataError, Metadata, MetadataLimitExceededError } from '@ledger/domain';
 import type { TenantTransaction } from '@ledger/database';
-import { InvalidLedgerMetadataError } from '../../domain/errors/invalid-ledger-metadata.error.js';
-import { LedgerMetadataLimitExceededError } from '../../domain/errors/ledger-metadata-limit-exceeded.error.js';
 import { LedgerNotFoundError } from '../../domain/errors/ledger-not-found.error.js';
 import { Ledger } from '../../domain/entities/ledger.entity.js';
 import type { ILedgerLogWriter } from '../../../journal/application/ports/ledger-log-writer.port.js';
@@ -16,7 +15,7 @@ const storedLedger = Ledger.reconstitute({
   id: LEDGER_ID,
   organizationId: ORG_ID,
   name: 'main',
-  metadata: { env: 'prod', team: 'payments' },
+  metadata: Metadata.reconstitute({ env: 'prod', team: 'payments' }),
   createdAt: new Date('2026-11-04T10:00:00.000Z'),
 });
 
@@ -113,7 +112,7 @@ describe('SaveLedgerMetadataUseCase', () => {
 
     const saved = ledgers.updateMetadata.mock.calls[0]![1];
     expect(saved.id).toBe(LEDGER_ID);
-    expect(saved.metadata).toEqual({ env: 'staging', team: 'payments', tier: '1' });
+    expect(saved.metadata.entries).toEqual({ env: 'staging', team: 'payments', tier: '1' });
   });
 
   it('writes a LEDGER_METADATA_SAVED log with the entries of the request', async () => {
@@ -171,24 +170,24 @@ describe('SaveLedgerMetadataUseCase', () => {
     expect(outbox.append).not.toHaveBeenCalled();
   });
 
-  it('throws InvalidLedgerMetadataError for metadata the domain refuses, and writes nothing', async () => {
+  it('throws InvalidMetadataError for metadata the domain refuses, and writes nothing', async () => {
     const { useCase, ledgers, logs, outbox } = setup();
     const metadata = { n: 1 } as unknown as Record<string, string>;
 
     await expect(useCase.execute({ ...input, metadata })).rejects.toBeInstanceOf(
-      InvalidLedgerMetadataError,
+      InvalidMetadataError,
     );
     expect(ledgers.updateMetadata).not.toHaveBeenCalled();
     expect(logs.append).not.toHaveBeenCalled();
     expect(outbox.append).not.toHaveBeenCalled();
   });
 
-  it('throws LedgerMetadataLimitExceededError when the result is too big, and writes nothing', async () => {
+  it('throws MetadataLimitExceededError when the result is too big, and writes nothing', async () => {
     const { useCase, ledgers, logs, outbox } = setup();
     const metadata = { big: 'x'.repeat(16 * 1024 + 1) };
 
     await expect(useCase.execute({ ...input, metadata })).rejects.toBeInstanceOf(
-      LedgerMetadataLimitExceededError,
+      MetadataLimitExceededError,
     );
     expect(ledgers.updateMetadata).not.toHaveBeenCalled();
     expect(logs.append).not.toHaveBeenCalled();

@@ -215,7 +215,7 @@ describe('ledgers (e2e)', () => {
     const entries = (count: number) =>
       Object.fromEntries(Array.from({ length: count }, (_, index) => [`k${index}`, '']));
 
-    it('creates a ledger with the most entries, and refuses one more with 400 LEDGER_METADATA_LIMIT_EXCEEDED', async () => {
+    it('creates a ledger with the most entries, and refuses one more with 400 METADATA_LIMIT_EXCEEDED', async () => {
       await createLedger(randomUUIDv7(), { name: 'main', metadata: entries(128) }).expect(201);
 
       const res = await createLedger(randomUUIDv7(), {
@@ -223,7 +223,7 @@ describe('ledgers (e2e)', () => {
         metadata: entries(129),
       }).expect(400);
 
-      expect(res.body.errorCode).toBe('LEDGER_METADATA_LIMIT_EXCEEDED');
+      expect(res.body.errorCode).toBe('METADATA_LIMIT_EXCEEDED');
     });
 
     it('accepts a value of 16 KiB and refuses a longer one', async () => {
@@ -235,7 +235,7 @@ describe('ledgers (e2e)', () => {
         b: 'v'.repeat(16 * 1024 + 1),
       }).expect(400);
 
-      expect(res.body.errorCode).toBe('LEDGER_METADATA_LIMIT_EXCEEDED');
+      expect(res.body.errorCode).toBe('METADATA_LIMIT_EXCEEDED');
     });
 
     it('counts what is already stored, so many small saves cannot pass the limit', async () => {
@@ -244,7 +244,7 @@ describe('ledgers (e2e)', () => {
 
       const res = await saveMetadata(organizationId, 'main', { extra: 'x' }).expect(400);
 
-      expect(res.body.errorCode).toBe('LEDGER_METADATA_LIMIT_EXCEEDED');
+      expect(res.body.errorCode).toBe('METADATA_LIMIT_EXCEEDED');
       const unchanged = await getLedger(organizationId, 'main').expect(200);
       expect(Object.keys(unchanged.body.metadata)).toHaveLength(128);
     });
@@ -273,7 +273,7 @@ describe('ledgers (e2e)', () => {
 
       const res = await saveMetadata(organizationId, 'main', { e: '' }).expect(400);
 
-      expect(res.body.errorCode).toBe('LEDGER_METADATA_LIMIT_EXCEEDED');
+      expect(res.body.errorCode).toBe('METADATA_LIMIT_EXCEEDED');
       const unchanged = await getLedger(organizationId, 'main').expect(200);
       expect(Object.keys(unchanged.body.metadata)).toEqual(['a', 'b', 'c', 'd']);
     });

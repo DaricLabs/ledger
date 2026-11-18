@@ -1,9 +1,8 @@
 import { HttpException, HttpStatus } from '@nestjs/common';
-import { InvalidLedgerMetadataError } from '../../domain/errors/invalid-ledger-metadata.error.js';
+import { ValueObjectError } from '@ledger/domain';
 import { InvalidLedgerNameError } from '../../domain/errors/invalid-ledger-name.error.js';
 import { LedgerAlreadyExistsError } from '../../domain/errors/ledger-already-exists.error.js';
 import type { LedgerDomainError } from '../../domain/errors/ledger-domain.error.js';
-import { LedgerMetadataLimitExceededError } from '../../domain/errors/ledger-metadata-limit-exceeded.error.js';
 import { LedgerNotFoundError } from '../../domain/errors/ledger-not-found.error.js';
 
 /**
@@ -14,23 +13,22 @@ import { LedgerNotFoundError } from '../../domain/errors/ledger-not-found.error.
  * decides the HTTP status. The domain messages are safe for clients: they
  * never contain metadata values, a metadata key only after it passed the key
  * limit, and a ledger name in a message has already passed the name pattern.
+ *
+ * A `ValueObjectError` here means bad or too big metadata. It is a mistake in
+ * the request, so it is a 400, like the shape errors.
  */
-export function toLedgerHttpException(error: LedgerDomainError): HttpException {
+export function toLedgerHttpException(error: LedgerDomainError | ValueObjectError): HttpException {
   return new HttpException(error.message, statusOf(error), { errorCode: error.code });
 }
 
-function statusOf(error: LedgerDomainError): HttpStatus {
+function statusOf(error: LedgerDomainError | ValueObjectError): HttpStatus {
   if (error instanceof LedgerNotFoundError) {
     return HttpStatus.NOT_FOUND;
   }
   if (error instanceof LedgerAlreadyExistsError) {
     return HttpStatus.CONFLICT;
   }
-  if (
-    error instanceof InvalidLedgerNameError ||
-    error instanceof InvalidLedgerMetadataError ||
-    error instanceof LedgerMetadataLimitExceededError
-  ) {
+  if (error instanceof InvalidLedgerNameError || error instanceof ValueObjectError) {
     return HttpStatus.BAD_REQUEST;
   }
   // A ledger error that has no status yet. A 500 is the safe answer: the core

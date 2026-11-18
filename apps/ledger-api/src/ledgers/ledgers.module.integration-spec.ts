@@ -168,7 +168,7 @@ describe('LedgersModule (real database)', () => {
       const found = await getLedger.execute({ organizationId, name: 'main' });
 
       expect(found.id).toBe(created.id);
-      expect(found.metadata).toEqual({ env: 'prod' });
+      expect(found.metadata.entries).toEqual({ env: 'prod' });
       expect(found.createdAt).toEqual(created.createdAt);
     });
 
@@ -301,7 +301,7 @@ describe('LedgersModule (real database)', () => {
       await saveMetadata.execute({ organizationId, name: 'main', metadata: { tier: '1' } });
       const found = await getLedger.execute({ organizationId, name: 'main' });
 
-      expect(found.metadata).toEqual({ env: 'prod', tier: '1' });
+      expect(found.metadata.entries).toEqual({ env: 'prod', tier: '1' });
     });
 
     it('writes nothing when every key already has the requested value', async () => {
@@ -403,7 +403,7 @@ describe('LedgersModule (real database)', () => {
       await deleteMetadata.execute({ organizationId, name: 'main', key: 'team' });
       const found = await getLedger.execute({ organizationId, name: 'main' });
 
-      expect(found.metadata).toEqual({ env: 'prod' });
+      expect(found.metadata.entries).toEqual({ env: 'prod' });
     });
 
     it('writes nothing when the key is not there', async () => {

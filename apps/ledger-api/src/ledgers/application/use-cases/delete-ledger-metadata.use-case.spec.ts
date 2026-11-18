@@ -1,3 +1,4 @@
+import { Metadata } from '@ledger/domain';
 import type { TenantTransaction } from '@ledger/database';
 import { LedgerNotFoundError } from '../../domain/errors/ledger-not-found.error.js';
 import { Ledger } from '../../domain/entities/ledger.entity.js';
@@ -14,7 +15,7 @@ const storedLedger = Ledger.reconstitute({
   id: LEDGER_ID,
   organizationId: ORG_ID,
   name: 'main',
-  metadata: { env: 'prod', team: 'payments' },
+  metadata: Metadata.reconstitute({ env: 'prod', team: 'payments' }),
   createdAt: new Date('2026-11-04T10:00:00.000Z'),
 });
 
@@ -111,7 +112,7 @@ describe('DeleteLedgerMetadataUseCase', () => {
 
     const saved = ledgers.updateMetadata.mock.calls[0]![1];
     expect(saved.id).toBe(LEDGER_ID);
-    expect(saved.metadata).toEqual({ team: 'payments' });
+    expect(saved.metadata.entries).toEqual({ team: 'payments' });
   });
 
   it('writes a LEDGER_METADATA_DELETED log with the key and no value', async () => {

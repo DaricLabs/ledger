@@ -1,5 +1,11 @@
 import type { TenantTransaction } from '@ledger/database';
-import { AccountAddress, AssetCode, InvalidAccountAddressError, Money } from '@ledger/domain';
+import {
+  AccountAddress,
+  AssetCode,
+  InvalidAccountAddressError,
+  Metadata,
+  Money,
+} from '@ledger/domain';
 import { IdempotencyKeyReusedError } from '../../../idempotency/domain/errors/idempotency-key-reused.error.js';
 import type { IIdempotencyKeyRepository } from '../../../idempotency/application/ports/idempotency-key-repository.port.js';
 import type { IIdGenerator } from '../../../ids/application/ports/id-generator.port.js';
@@ -32,7 +38,7 @@ const storedLedger = Ledger.reconstitute({
   id: LEDGER_ID,
   organizationId: ORG_ID,
   name: 'main',
-  metadata: {},
+  metadata: Metadata.reconstitute({}),
   createdAt: new Date('2026-11-04T10:00:00.000Z'),
 });
 
