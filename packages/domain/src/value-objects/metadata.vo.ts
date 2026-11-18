@@ -67,9 +67,9 @@ export class Metadata {
    * `METADATA_LIMITS` allow.
    */
   static of(entries: MetadataEntries): Metadata {
-    assertValidEntries(entries);
-    assertWithinLimits(entries, entries);
-    return new Metadata(freeze(entries));
+    const snapshot = checkedSnapshot(entries);
+    assertWithinLimits(snapshot, snapshot);
+    return new Metadata(snapshot);
   }
 
   /**
@@ -119,15 +119,15 @@ export class Metadata {
    * metadata that is over one of them must get smaller first (see `remove`).
    */
   merge(changes: MetadataEntries): Metadata {
-    assertValidEntries(changes);
-    const unchanged = Object.entries(changes).every(
+    const snapshot = checkedSnapshot(changes);
+    const unchanged = Object.entries(snapshot).every(
       ([key, value]) => this.has(key) && this.values[key] === value,
     );
     if (unchanged) {
       return this;
     }
-    const merged = { ...this.values, ...changes };
-    assertWithinLimits(changes, merged);
+    const merged = { ...this.values, ...snapshot };
+    assertWithinLimits(snapshot, merged);
     return new Metadata(freeze(merged));
   }
 
@@ -156,12 +156,27 @@ function freeze(entries: MetadataEntries): MetadataEntries {
   return Object.freeze({ ...entries });
 }
 
-// The parameter is `unknown` on purpose: the type says "strings only", but at
-// runtime the value may come from any JSON body.
-function assertValidEntries(entries: unknown): asserts entries is MetadataEntries {
-  if (typeof entries !== 'object' || entries === null || Array.isArray(entries)) {
+/**
+ * Copies input from a caller and checks the copy, never the original.
+ *
+ * Checking the original and then copying it would read it twice. An object
+ * with a getter can answer differently the second time, so a value could pass
+ * the checks and still be stored unchecked. One copy is read once, and every
+ * later check and the storage use that copy.
+ *
+ * The parameter is `unknown` on purpose: the type says "strings only", but at
+ * runtime the value may come from any JSON body.
+ */
+function checkedSnapshot(input: unknown): MetadataEntries {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
     throw new InvalidMetadataError('Metadata must be an object');
   }
+  const snapshot = freeze(input as MetadataEntries);
+  assertStringEntries(snapshot);
+  return snapshot;
+}
+
+function assertStringEntries(entries: Readonly<Record<string, unknown>>): void {
   for (const [key, value] of Object.entries(entries)) {
     if (key === '') {
       throw new InvalidMetadataError('Metadata keys must not be empty');
@@ -180,7 +195,7 @@ function assertValidEntries(entries: unknown): asserts entries is MetadataEntrie
  * will have after the write, and it is checked as a whole (number of keys,
  * total size). On create, both are the same object.
  *
- * It expects entries that already passed `assertValidEntries`. The order is
+ * It expects entries that already passed `checkedSnapshot`. The order is
  * fixed, so the same input always gives the same error: too many keys, then a
  * key that is too long, then a value that is too long, then the total.
  */

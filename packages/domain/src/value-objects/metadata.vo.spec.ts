@@ -126,6 +126,42 @@ describe('Metadata.of', () => {
   });
 });
 
+/** An object whose `key` answers with `first` for the first `times` reads, then with `later`. */
+function changingGetter(first: string, later: string, times: number): MetadataEntries {
+  let reads = 0;
+  return {
+    get key() {
+      reads += 1;
+      return reads <= times ? first : later;
+    },
+  };
+}
+
+describe('Metadata snapshot of caller input', () => {
+  it('reads each value of `of` once, so a getter cannot pass the checks and store another value', () => {
+    // Enough reads for a check that reads many times, then a value that is too long.
+    const input = changingGetter('', 'x'.repeat(16385), 3);
+
+    const metadata = Metadata.of(input);
+
+    expect(metadata.entries.key).toBe('');
+  });
+
+  it('reads each value of `merge` once', () => {
+    const input = changingGetter('', 'x'.repeat(16385), 3);
+
+    const merged = Metadata.empty().merge(input);
+
+    expect(merged.entries.key).toBe('');
+  });
+
+  it('checks the value it stores: a getter that answers badly at the first read is rejected', () => {
+    const input = changingGetter('x'.repeat(16385), '', 1);
+
+    expect(() => Metadata.of(input)).toThrow(MetadataLimitExceededError);
+  });
+});
+
 describe('Metadata.of limits', () => {
   const create = (input: Record<string, string>) => () => Metadata.of(input);
 
