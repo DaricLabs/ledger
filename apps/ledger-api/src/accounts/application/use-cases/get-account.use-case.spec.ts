@@ -29,6 +29,7 @@ const storedLedger = Ledger.reconstitute({
 const storedAccount = Account.reconstitute({
   address: AccountAddress.of('users:1'),
   allowOverdraft: false,
+  metadata: Metadata.reconstitute({}),
   createdAt: new Date('2026-11-09T10:00:01.000Z'),
   balances: [Money.of(AssetCode.of('USD'), 100n)],
 });
@@ -63,6 +64,8 @@ function setup() {
       calls.push('find account');
       return storedAccount;
     }),
+    lockByAddress: vi.fn<IAccountRepository['lockByAddress']>(),
+    updateMetadata: vi.fn<IAccountRepository['updateMetadata']>(),
     findPage: vi.fn<IAccountRepository['findPage']>(),
   };
 

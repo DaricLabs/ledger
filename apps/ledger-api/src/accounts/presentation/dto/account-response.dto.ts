@@ -1,4 +1,4 @@
-import type { Money } from '@ledger/domain';
+import type { MetadataEntries, Money } from '@ledger/domain';
 import type { IAccountPage } from '../../application/ports/account-repository.port.js';
 import type { Account } from '../../domain/entities/account.entity.js';
 import { encodeAccountCursor } from './account-page-cursor.dto.js';
@@ -25,6 +25,8 @@ export interface IAccountResponse {
   allowOverdraft: boolean;
   /** One entry for each asset the account has held, in the order of the asset codes. */
   balances: IBalanceResponse[];
+  /** The key/value pairs of the caller. An empty object when there are none. */
+  metadata: MetadataEntries;
   /** When the ledger first saw the account. ISO 8601 date in UTC, like `2026-11-09T10:00:00.000Z`. */
   createdAt: string;
 }
@@ -38,6 +40,7 @@ export function toAccountResponseDto(account: Account): IAccountResponse {
     address: account.address.value,
     allowOverdraft: account.allowOverdraft,
     balances: account.balances.map(toBalanceResponseDto),
+    metadata: account.metadata.entries,
     createdAt: account.createdAt.toISOString(),
   };
 }

@@ -24,6 +24,7 @@ const storedPage: IAccountPage = {
     Account.reconstitute({
       address: AccountAddress.of('users:1'),
       allowOverdraft: false,
+      metadata: Metadata.reconstitute({}),
       createdAt: new Date('2026-11-09T10:00:01.000Z'),
       balances: [Money.of(AssetCode.of('USD'), 100n)],
     }),
@@ -58,6 +59,8 @@ function setup() {
   };
   const accounts = {
     findByAddress: vi.fn<IAccountRepository['findByAddress']>(),
+    lockByAddress: vi.fn<IAccountRepository['lockByAddress']>(),
+    updateMetadata: vi.fn<IAccountRepository['updateMetadata']>(),
     findPage: vi.fn<IAccountRepository['findPage']>(async () => {
       calls.push('find page');
       return storedPage;

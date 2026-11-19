@@ -1,7 +1,14 @@
 import { randomUUIDv7 } from 'node:crypto';
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { AccountAddress, AssetCode, Money } from '@ledger/domain';
+import {
+  AccountAddress,
+  AssetCode,
+  InvalidMetadataError,
+  Metadata,
+  MetadataLimitExceededError,
+  Money,
+} from '@ledger/domain';
 import { LoggerModule } from 'nestjs-pino';
 import request from 'supertest';
 import type { App } from 'supertest/types.js';
@@ -9,8 +16,10 @@ import { ErrorsModule } from '../../../core/errors/errors.module.js';
 import { ORGANIZATION_ID_HEADER } from '../../../core/tenant/tenant.guard.js';
 import { ValidationModule } from '../../../core/validation/validation.module.js';
 import { LedgerNotFoundError } from '../../../ledgers/domain/errors/ledger-not-found.error.js';
+import { DeleteAccountMetadataUseCase } from '../../application/use-cases/delete-account-metadata.use-case.js';
 import { GetAccountUseCase } from '../../application/use-cases/get-account.use-case.js';
 import { ListAccountsUseCase } from '../../application/use-cases/list-accounts.use-case.js';
+import { SaveAccountMetadataUseCase } from '../../application/use-cases/save-account-metadata.use-case.js';
 import { AccountDomainError } from '../../domain/errors/account-domain.error.js';
 import { AccountNotFoundError } from '../../domain/errors/account-not-found.error.js';
 import { Account } from '../../domain/entities/account.entity.js';
@@ -22,6 +31,8 @@ import { AccountsController } from './accounts.controller.js';
 describe('AccountsController', () => {
   const executeGet = vi.fn<GetAccountUseCase['execute']>();
   const executeList = vi.fn<ListAccountsUseCase['execute']>();
+  const executeSave = vi.fn<SaveAccountMetadataUseCase['execute']>();
+  const executeDelete = vi.fn<DeleteAccountMetadataUseCase['execute']>();
   const organizationId = randomUUIDv7();
   let app: INestApplication<App>;
 
@@ -36,6 +47,8 @@ describe('AccountsController', () => {
       providers: [
         { provide: GetAccountUseCase, useValue: { execute: executeGet } },
         { provide: ListAccountsUseCase, useValue: { execute: executeList } },
+        { provide: SaveAccountMetadataUseCase, useValue: { execute: executeSave } },
+        { provide: DeleteAccountMetadataUseCase, useValue: { execute: executeDelete } },
       ],
     }).compile();
     app = moduleRef.createNestApplication();
@@ -49,6 +62,8 @@ describe('AccountsController', () => {
   beforeEach(() => {
     executeGet.mockReset();
     executeList.mockReset();
+    executeSave.mockReset();
+    executeDelete.mockReset();
   });
 
   const usd = AssetCode.of('USD');
@@ -58,6 +73,7 @@ describe('AccountsController', () => {
     Account.reconstitute({
       address: AccountAddress.of('users:1'),
       allowOverdraft: false,
+      metadata: Metadata.empty(),
       createdAt: new Date('2026-11-09T10:00:00.000Z'),
       balances: [Money.of(eur, 5n), Money.of(usd, 1050n)],
       ...overrides,
@@ -82,8 +98,19 @@ describe('AccountsController', () => {
           { asset: 'EUR', amount: '5' },
           { asset: 'USD', amount: '1050' },
         ],
+        metadata: {},
         createdAt: '2026-11-09T10:00:00.000Z',
       });
+    });
+
+    it('sends the metadata of the account', async () => {
+      executeGet.mockResolvedValue(
+        stored({ metadata: Metadata.of({ customerId: 'c_42', tier: 'gold' }) }),
+      );
+
+      const res = await get().expect(200);
+
+      expect(res.body.metadata).toEqual({ customerId: 'c_42', tier: 'gold' });
     });
 
     it('shows a negative balance of an account that may go below zero', async () => {
@@ -251,6 +278,7 @@ describe('AccountsController', () => {
                 { asset: 'EUR', amount: '5' },
                 { asset: 'USD', amount: '1050' },
               ],
+              metadata: {},
               createdAt: '2026-11-09T10:00:00.000Z',
             },
           ],
@@ -377,6 +405,205 @@ describe('AccountsController', () => {
         expect(res.body.errorCode).toBe('VALIDATION');
         expect(res.body.details.map((d: { path: string }) => d.path)).toContain(path);
         expect(executeList).not.toHaveBeenCalled();
+      });
+    });
+  });
+
+  describe('metadata', () => {
+    const url = (address = 'users:1', ledger = 'main') =>
+      `/ledgers/${ledger}/accounts/${address}/metadata`;
+
+    /** `org` is the header value. Pass `null` to send no header at all. */
+    const save = (
+      body: unknown = { customerId: 'c_42' },
+      address = 'users:1',
+      ledger = 'main',
+      org: string | null = organizationId,
+    ) => {
+      const req = request(app.getHttpServer())
+        .post(url(address, ledger))
+        .send(body as object);
+      return org === null ? req : req.set(ORGANIZATION_ID_HEADER, org);
+    };
+
+    const remove = (
+      key = 'customerId',
+      address = 'users:1',
+      ledger = 'main',
+      org: string | null = organizationId,
+    ) => {
+      const req = request(app.getHttpServer()).delete(`${url(address, ledger)}/${key}`);
+      return org === null ? req : req.set(ORGANIZATION_ID_HEADER, org);
+    };
+
+    beforeEach(() => {
+      executeSave.mockResolvedValue(undefined);
+      executeDelete.mockResolvedValue(undefined);
+    });
+
+    describe('POST /ledgers/:ledgerName/accounts/:address/metadata', () => {
+      it('returns 204 with no body, and gives the use case the organization, ledger, address and entries', async () => {
+        const res = await save({ customerId: 'c_42', tier: 'gold' }, 'users:1', 'my-ledger').expect(
+          204,
+        );
+
+        expect(res.text).toBe('');
+        expect(executeSave).toHaveBeenCalledExactlyOnceWith({
+          organizationId,
+          ledgerName: 'my-ledger',
+          address: 'users:1',
+          metadata: { customerId: 'c_42', tier: 'gold' },
+        });
+      });
+
+      it('reads an address whose colon is written as %3A', async () => {
+        await save({ a: '1' }, 'platform%3Afees%3Aeu').expect(204);
+
+        expect(executeSave).toHaveBeenCalledWith(
+          expect.objectContaining({ address: 'platform:fees:eu' }),
+        );
+      });
+
+      it('returns 404 ACCOUNT_NOT_FOUND when the ledger has no such account', async () => {
+        executeSave.mockRejectedValue(new AccountNotFoundError('users:1'));
+
+        const res = await save().expect(404);
+
+        expect(res.body).toEqual({
+          errorCode: 'ACCOUNT_NOT_FOUND',
+          errorMessage: 'Account not found in the ledger',
+        });
+      });
+
+      it('returns 404 LEDGER_NOT_FOUND when there is no such ledger', async () => {
+        executeSave.mockRejectedValue(new LedgerNotFoundError('main'));
+
+        const res = await save().expect(404);
+
+        expect(res.body.errorCode).toBe('LEDGER_NOT_FOUND');
+      });
+
+      it('returns 400 INVALID_METADATA when the domain refuses the metadata', async () => {
+        executeSave.mockRejectedValue(new InvalidMetadataError('Metadata keys must not be empty'));
+
+        const res = await save().expect(400);
+
+        expect(res.body.errorCode).toBe('INVALID_METADATA');
+      });
+
+      it('returns 400 METADATA_LIMIT_EXCEEDED when the metadata is too big', async () => {
+        executeSave.mockRejectedValue(new MetadataLimitExceededError('total', 65536));
+
+        const res = await save().expect(400);
+
+        expect(res.body.errorCode).toBe('METADATA_LIMIT_EXCEEDED');
+      });
+
+      it('answers 500 and hides the details for an error that is not a domain error', async () => {
+        executeSave.mockRejectedValue(new Error('database is down'));
+
+        const res = await save().expect(500);
+
+        expect(JSON.stringify(res.body)).not.toContain('database is down');
+      });
+
+      describe('validation (400 VALIDATION)', () => {
+        it.each([
+          ['an empty object', {}],
+          ['an array', [{ a: '1' }]],
+          ['a number value', { a: 1 }],
+          ['a null value', { a: null }],
+          ['an object value', { a: { b: '1' } }],
+          ['an empty key', { '': 'x' }],
+        ])('refuses %s as the body', async (_name, body) => {
+          const res = await save(body).expect(400);
+
+          expect(res.body.errorCode).toBe('VALIDATION');
+          expect(executeSave).not.toHaveBeenCalled();
+        });
+
+        it('refuses a missing body', async () => {
+          const res = await request(app.getHttpServer())
+            .post(url())
+            .set(ORGANIZATION_ID_HEADER, organizationId)
+            .expect(400);
+
+          expect(res.body.errorCode).toBe('VALIDATION');
+          expect(executeSave).not.toHaveBeenCalled();
+        });
+
+        it('refuses an address with a wrong shape', async () => {
+          const res = await save({ a: '1' }, 'Bad_Address').expect(400);
+
+          expect(res.body.errorCode).toBe('VALIDATION');
+          expect(executeSave).not.toHaveBeenCalled();
+        });
+
+        it('refuses a ledger name with a wrong shape', async () => {
+          const res = await save({ a: '1' }, 'users:1', 'Bad Ledger').expect(400);
+
+          expect(res.body.errorCode).toBe('VALIDATION');
+          expect(executeSave).not.toHaveBeenCalled();
+        });
+      });
+
+      describe('tenant guard', () => {
+        it('refuses a request without the organization header', async () => {
+          await save({ a: '1' }, 'users:1', 'main', null).expect(400);
+
+          expect(executeSave).not.toHaveBeenCalled();
+        });
+      });
+    });
+
+    describe('DELETE /ledgers/:ledgerName/accounts/:address/metadata/:key', () => {
+      it('returns 204 with no body, and gives the use case the organization, ledger, address and key', async () => {
+        const res = await remove('customerId', 'users:1', 'my-ledger').expect(204);
+
+        expect(res.text).toBe('');
+        expect(executeDelete).toHaveBeenCalledExactlyOnceWith({
+          organizationId,
+          ledgerName: 'my-ledger',
+          address: 'users:1',
+          key: 'customerId',
+        });
+      });
+
+      it('reads an address and a key that are written with %3A', async () => {
+        await remove('order%3A42', 'platform%3Afees%3Aeu').expect(204);
+
+        expect(executeDelete).toHaveBeenCalledWith(
+          expect.objectContaining({ address: 'platform:fees:eu', key: 'order:42' }),
+        );
+      });
+
+      it('returns 404 ACCOUNT_NOT_FOUND when the ledger has no such account', async () => {
+        executeDelete.mockRejectedValue(new AccountNotFoundError('users:1'));
+
+        const res = await remove().expect(404);
+
+        expect(res.body.errorCode).toBe('ACCOUNT_NOT_FOUND');
+      });
+
+      it('returns 404 LEDGER_NOT_FOUND when there is no such ledger', async () => {
+        executeDelete.mockRejectedValue(new LedgerNotFoundError('main'));
+
+        const res = await remove().expect(404);
+
+        expect(res.body.errorCode).toBe('LEDGER_NOT_FOUND');
+      });
+
+      it('refuses an address with a wrong shape', async () => {
+        const res = await remove('a', 'Bad_Address').expect(400);
+
+        expect(res.body.errorCode).toBe('VALIDATION');
+        expect(executeDelete).not.toHaveBeenCalled();
+      });
+
+      it('refuses a request without the organization header', async () => {
+        await remove('a', 'users:1', 'main', null).expect(400);
+
+        expect(executeDelete).not.toHaveBeenCalled();
       });
     });
   });

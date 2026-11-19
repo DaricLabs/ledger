@@ -1,6 +1,8 @@
 import { AccountAddress, AssetCode, Money } from '@ledger/domain';
 import {
   createDb,
+  sql,
+  SqlState,
   unwrapTenantTransaction,
   withTenant,
   type LedgerDatabase,
@@ -31,6 +33,21 @@ afterAll(() => db.destroy());
 
 const address = (value: string) => AccountAddress.of(value);
 const asset = (value: string) => AssetCode.of(value);
+
+/** Sets the metadata of an account with plain SQL, as the setup of a test. */
+async function setMetadata(
+  trx: TenantTransaction,
+  ledgerId: string,
+  account: string,
+  metadata: Record<string, string>,
+): Promise<void> {
+  await unwrapTenantTransaction(trx)
+    .updateTable('accounts')
+    .set({ metadata })
+    .where('ledger_id', '=', ledgerId)
+    .where('address', '=', account)
+    .execute();
+}
 
 async function insertLedger(
   trx: TenantTransaction,
@@ -211,6 +228,334 @@ describe('KyselyAccountRepository.findByAddress', () => {
     );
 
     expect(account).toBeNull();
+  });
+});
+
+describe('KyselyAccountRepository metadata', () => {
+  it('gives an account with no metadata an empty one', async () => {
+    const organizationId = ids.next();
+
+    const account = await withTenant(db, organizationId, async (trx) => {
+      const ledgerId = await insertLedger(trx, organizationId);
+      await putBalances(trx, ledgerId, 'users:1', { USD: 1n });
+      return repository.findByAddress(trx, ledgerId, address('users:1'));
+    });
+
+    expect(account?.metadata.entries).toEqual({});
+  });
+
+  it('reads the metadata in findByAddress and findPage', async () => {
+    const organizationId = ids.next();
+
+    const { found, page } = await withTenant(db, organizationId, async (trx) => {
+      const ledgerId = await insertLedger(trx, organizationId);
+      await putBalances(trx, ledgerId, 'users:1', { USD: 1n });
+      await setMetadata(trx, ledgerId, 'users:1', { customerId: 'c_42', tier: 'gold' });
+      return {
+        found: await repository.findByAddress(trx, ledgerId, address('users:1')),
+        page: await repository.findPage(trx, ledgerId, { limit: 10 }),
+      };
+    });
+
+    expect(found?.metadata.entries).toEqual({ customerId: 'c_42', tier: 'gold' });
+    expect(page.accounts[0]?.metadata.entries).toEqual({ customerId: 'c_42', tier: 'gold' });
+  });
+
+  describe('lockByAddress', () => {
+    it('finds an account like findByAddress does, with its balances and metadata', async () => {
+      const organizationId = ids.next();
+
+      const { locked, found } = await withTenant(db, organizationId, async (trx) => {
+        const ledgerId = await insertLedger(trx, organizationId);
+        await putBalances(trx, ledgerId, 'users:1', { USD: 1050n, EUR: 5n });
+        await setMetadata(trx, ledgerId, 'users:1', { customerId: 'c_42' });
+        return {
+          locked: await repository.lockByAddress(trx, ledgerId, address('users:1')),
+          found: await repository.findByAddress(trx, ledgerId, address('users:1')),
+        };
+      });
+
+      expect(locked?.address.value).toBe('users:1');
+      expect(locked?.metadata.entries).toEqual({ customerId: 'c_42' });
+      expect(locked?.balances.map((m) => [m.asset.value, m.amount])).toEqual([
+        ['EUR', 5n],
+        ['USD', 1050n],
+      ]);
+      expect(locked?.createdAt).toEqual(found?.createdAt);
+    });
+
+    it('returns null for an address that has no account, and matches the whole address', async () => {
+      const organizationId = ids.next();
+
+      const { missing, part } = await withTenant(db, organizationId, async (trx) => {
+        const ledgerId = await insertLedger(trx, organizationId);
+        await putBalances(trx, ledgerId, 'users:12', { USD: 1n });
+        return {
+          missing: await repository.lockByAddress(trx, ledgerId, address('users:9')),
+          part: await repository.lockByAddress(trx, ledgerId, address('users:1')),
+        };
+      });
+
+      expect(missing).toBeNull();
+      expect(part).toBeNull();
+    });
+
+    it('only finds accounts of the ledger it is asked about', async () => {
+      const organizationId = ids.next();
+
+      const { inFirst, inSecond } = await withTenant(db, organizationId, async (trx) => {
+        const first = await insertLedger(trx, organizationId, 'first');
+        const second = await insertLedger(trx, organizationId, 'second');
+        await putBalances(trx, first, 'users:1', { USD: 100n });
+        return {
+          inFirst: await repository.lockByAddress(trx, first, address('users:1')),
+          inSecond: await repository.lockByAddress(trx, second, address('users:1')),
+        };
+      });
+
+      expect(inFirst).not.toBeNull();
+      expect(inSecond).toBeNull();
+    });
+
+    it('does not find the account of another organization', async () => {
+      const organizationId = ids.next();
+      const otherOrganizationId = ids.next();
+      const ledgerId = await withTenant(db, organizationId, async (trx) => {
+        const id = await insertLedger(trx, organizationId);
+        await putBalances(trx, id, 'users:1', { USD: 100n });
+        return id;
+      });
+
+      const account = await withTenant(db, otherOrganizationId, (trx) =>
+        repository.lockByAddress(trx, ledgerId, address('users:1')),
+      );
+
+      expect(account).toBeNull();
+    });
+
+    describe('the lock', () => {
+      /**
+       * Locks the account in a transaction that stays open until `release` is
+       * called. Resolves when the lock is taken.
+       */
+      async function holdLock(organizationId: string, ledgerId: string) {
+        let release!: () => void;
+        const released = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        let taken!: () => void;
+        const lockTaken = new Promise<void>((resolve) => {
+          taken = resolve;
+        });
+
+        const done = withTenant(db, organizationId, async (trx) => {
+          await repository.lockByAddress(trx, ledgerId, address('users:1'));
+          taken();
+          await released;
+        });
+        await Promise.race([lockTaken, done]); // `done` ends first only if locking failed
+        return { release, done };
+      }
+
+      const prepare = async () => {
+        const organizationId = ids.next();
+        const ledgerId = await withTenant(db, organizationId, async (trx) => {
+          const id = await insertLedger(trx, organizationId);
+          await putBalances(trx, id, 'users:1', { USD: 100n });
+          return id;
+        });
+        return { organizationId, ledgerId };
+      };
+
+      it('makes a second locking read wait until the first transaction ends', async () => {
+        const { organizationId, ledgerId } = await prepare();
+        const first = await holdLock(organizationId, ledgerId);
+
+        // A short lock timeout turns "waits forever" into an error we can check.
+        const second = withTenant(db, organizationId, async (trx) => {
+          await sql`set local lock_timeout = '300ms'`.execute(unwrapTenantTransaction(trx));
+          await repository.lockByAddress(trx, ledgerId, address('users:1'));
+        });
+
+        await expect(second).rejects.toMatchObject({ code: SqlState.LockNotAvailable });
+        first.release();
+        await first.done;
+      });
+
+      it('lets the next locking read go on after the first transaction ends', async () => {
+        const { organizationId, ledgerId } = await prepare();
+        const first = await holdLock(organizationId, ledgerId);
+        first.release();
+        await first.done;
+
+        const found = await withTenant(db, organizationId, (trx) =>
+          repository.lockByAddress(trx, ledgerId, address('users:1')),
+        );
+
+        expect(found?.address.value).toBe('users:1');
+      });
+
+      it('does not block a plain read of the same account', async () => {
+        const { organizationId, ledgerId } = await prepare();
+        const first = await holdLock(organizationId, ledgerId);
+
+        const found = await withTenant(db, organizationId, async (trx) => {
+          await sql`set local lock_timeout = '300ms'`.execute(unwrapTenantTransaction(trx));
+          return repository.findByAddress(trx, ledgerId, address('users:1'));
+        });
+
+        expect(found?.address.value).toBe('users:1');
+        first.release();
+        await first.done;
+      });
+
+      it('does not block the balance rows, so money can still move through a locked account', async () => {
+        const { organizationId, ledgerId } = await prepare();
+        const first = await holdLock(organizationId, ledgerId);
+
+        const moved = await withTenant(db, organizationId, async (trx) => {
+          await sql`set local lock_timeout = '300ms'`.execute(unwrapTenantTransaction(trx));
+          const [balance] = await balances.lock(trx, ledgerId, [
+            { address: address('users:1'), asset: asset('USD') },
+          ]);
+          await balances.save(trx, ledgerId, [balance!]);
+          return balance;
+        });
+
+        expect(moved?.balance.amount).toBe(100n);
+        first.release();
+        await first.done;
+      });
+    });
+  });
+
+  describe('updateMetadata', () => {
+    it('saves the metadata of the account, and findByAddress reads it back', async () => {
+      const organizationId = ids.next();
+
+      const { saved, found } = await withTenant(db, organizationId, async (trx) => {
+        const ledgerId = await insertLedger(trx, organizationId);
+        await putBalances(trx, ledgerId, 'users:1', { USD: 100n });
+        const account = await repository.lockByAddress(trx, ledgerId, address('users:1'));
+        const updated = account!.withMetadata({ customerId: 'c_42', tier: 'gold' });
+        await repository.updateMetadata(trx, ledgerId, updated);
+        return {
+          saved: updated,
+          found: await repository.findByAddress(trx, ledgerId, address('users:1')),
+        };
+      });
+
+      expect(found?.metadata.entries).toEqual({ customerId: 'c_42', tier: 'gold' });
+      expect(found?.metadata.entries).toEqual(saved.metadata.entries);
+    });
+
+    it('replaces the stored metadata with the one of the account, so a removed key is gone', async () => {
+      const organizationId = ids.next();
+
+      const found = await withTenant(db, organizationId, async (trx) => {
+        const ledgerId = await insertLedger(trx, organizationId);
+        await putBalances(trx, ledgerId, 'users:1', { USD: 100n });
+        await setMetadata(trx, ledgerId, 'users:1', { a: '1', b: '2' });
+        const account = await repository.lockByAddress(trx, ledgerId, address('users:1'));
+        await repository.updateMetadata(trx, ledgerId, account!.withoutMetadataKey('a'));
+        return repository.findByAddress(trx, ledgerId, address('users:1'));
+      });
+
+      expect(found?.metadata.entries).toEqual({ b: '2' });
+    });
+
+    it('keeps values that look like SQL or JSON as plain text', async () => {
+      const organizationId = ids.next();
+      const tricky = { quote: `it's "x"`, json: '{"a":1}', unicode: 'é✓', empty: '' };
+
+      const found = await withTenant(db, organizationId, async (trx) => {
+        const ledgerId = await insertLedger(trx, organizationId);
+        await putBalances(trx, ledgerId, 'users:1', { USD: 100n });
+        const account = await repository.lockByAddress(trx, ledgerId, address('users:1'));
+        await repository.updateMetadata(trx, ledgerId, account!.withMetadata(tricky));
+        return repository.findByAddress(trx, ledgerId, address('users:1'));
+      });
+
+      expect(found?.metadata.entries).toEqual(tricky);
+    });
+
+    it('changes nothing else: not the balances, the overdraft rule or the date', async () => {
+      const organizationId = ids.next();
+
+      const { before, after } = await withTenant(db, organizationId, async (trx) => {
+        const ledgerId = await insertLedger(trx, organizationId);
+        await putBalances(trx, ledgerId, 'world', { USD: -100n });
+        await putBalances(trx, ledgerId, 'users:1', { USD: 100n });
+        const account = await repository.lockByAddress(trx, ledgerId, address('world'));
+        await repository.updateMetadata(trx, ledgerId, account!.withMetadata({ a: '1' }));
+        return {
+          before: account,
+          after: await repository.findByAddress(trx, ledgerId, address('world')),
+        };
+      });
+
+      expect(after?.allowOverdraft).toBe(true);
+      expect(after?.createdAt).toEqual(before?.createdAt);
+      expect(after?.balances.map((m) => m.amount)).toEqual([-100n]);
+    });
+
+    it('changes only the account it is given', async () => {
+      const organizationId = ids.next();
+
+      const other = await withTenant(db, organizationId, async (trx) => {
+        const first = await insertLedger(trx, organizationId, 'first');
+        const second = await insertLedger(trx, organizationId, 'second');
+        await putBalances(trx, first, 'users:1', { USD: 1n });
+        await putBalances(trx, first, 'users:2', { USD: 1n });
+        await putBalances(trx, second, 'users:1', { USD: 1n });
+        const account = await repository.lockByAddress(trx, first, address('users:1'));
+        await repository.updateMetadata(trx, first, account!.withMetadata({ a: '1' }));
+        return {
+          sameLedger: await repository.findByAddress(trx, first, address('users:2')),
+          otherLedger: await repository.findByAddress(trx, second, address('users:1')),
+        };
+      });
+
+      expect(other.sameLedger?.metadata.entries).toEqual({});
+      expect(other.otherLedger?.metadata.entries).toEqual({});
+    });
+
+    it('throws when the account is not there, instead of passing quietly', async () => {
+      const organizationId = ids.next();
+
+      const update = withTenant(db, organizationId, async (trx) => {
+        const ledgerId = await insertLedger(trx, organizationId);
+        await putBalances(trx, ledgerId, 'users:1', { USD: 1n });
+        const account = await repository.lockByAddress(trx, ledgerId, address('users:1'));
+        // Another ledger id: there is no such account row.
+        await repository.updateMetadata(trx, ids.next(), account!.withMetadata({ a: '1' }));
+      });
+
+      await expect(update).rejects.toThrow('Expected to update 1 account row, but updated 0');
+    });
+
+    it('throws for the account of another organization (row-level security hides the row)', async () => {
+      const organizationId = ids.next();
+      const otherOrganizationId = ids.next();
+      const { ledgerId, account } = await withTenant(db, organizationId, async (trx) => {
+        const id = await insertLedger(trx, organizationId);
+        await putBalances(trx, id, 'users:1', { USD: 1n });
+        return {
+          ledgerId: id,
+          account: await repository.findByAddress(trx, id, address('users:1')),
+        };
+      });
+
+      const update = withTenant(db, otherOrganizationId, (trx) =>
+        repository.updateMetadata(trx, ledgerId, account!.withMetadata({ a: '1' })),
+      );
+
+      await expect(update).rejects.toThrow('Expected to update 1 account row, but updated 0');
+      const unchanged = await withTenant(db, organizationId, (trx) =>
+        repository.findByAddress(trx, ledgerId, address('users:1')),
+      );
+      expect(unchanged?.metadata.entries).toEqual({});
+    });
   });
 });
 
