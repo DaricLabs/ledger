@@ -1,3 +1,4 @@
+import { Metadata, type MetadataEntries } from '@ledger/domain';
 import {
   balanceKeyText,
   compareBalanceKeys,
@@ -27,6 +28,8 @@ export interface INewTransactionProps {
   reference: string | null;
   /** The moves of money, applied one after the other, in this order. */
   postings: readonly Posting[];
+  /** Free-form key/value pairs of the caller. Already checked: a `Metadata` is always valid. */
+  metadata: Metadata;
   /** The business time of the transaction: when it happened. */
   postedAt: Date;
   /** When the ledger saved it. */
@@ -45,11 +48,13 @@ export interface ITransactionProps extends INewTransactionProps {
  * A transaction: a list of postings that happen together, all or nothing.
  *
  * It is immutable, so it has getters and no setters. Getters return safe
- * values (a frozen list and copies of the dates), so callers cannot change a
- * transaction by accident. Once saved, a transaction is never changed or
- * removed: a mistake is fixed by a new transaction. The only thing that
- * changes later is that a transaction gets reverted (see `reverse`), and that
- * is saved by the repository, not by this class.
+ * values (a frozen list, an immutable `Metadata` and copies of the dates), so
+ * callers cannot change a transaction by accident. Once saved, a transaction
+ * is never changed or removed: a mistake is fixed by a new transaction. Only
+ * two things change later. A transaction can get reverted (see `reverse`),
+ * which is saved by the repository, not by this class. And its metadata can
+ * be edited (`withMetadata`, `withoutMetadataKey`), which gives back a new
+ * transaction. The postings never change.
  *
  * Make a new one with `Transaction.create`, and one that is read from
  * storage with `Transaction.reconstitute`.
@@ -96,13 +101,23 @@ export class Transaction {
   }
 
   /**
-   * This transaction as it was when it was saved: not reverted. A new
-   * transaction is never reverted, so this is what the request that made it
+   * This transaction as it was when it was saved: not reverted, and with the
+   * metadata it was created with. This is what the request that made it
    * answered. A repeated request (same idempotency key) must answer the same,
-   * even if the transaction was reverted since.
+   * even if the transaction was reverted or its metadata was edited since.
+   *
+   * @param createdMetadata The metadata the transaction was created with. The
+   * transaction does not keep it, because edits replace it. The caller knows
+   * it: the key matched, so the repeated request has the same metadata as the
+   * first one.
    */
-  asCreated(): Transaction {
-    return Transaction.from({ ...this.props, revertedAt: null, revertedByTransactionId: null });
+  asCreated(createdMetadata: Metadata): Transaction {
+    return Transaction.from({
+      ...this.props,
+      metadata: createdMetadata,
+      revertedAt: null,
+      revertedByTransactionId: null,
+    });
   }
 
   /** Copies the data, so the caller cannot change a transaction through what it passed in. */
@@ -114,6 +129,8 @@ export class Transaction {
         ledgerId: props.ledgerId,
         reference: props.reference,
         postings: Object.freeze([...props.postings]),
+        // No copy needed: a `Metadata` never changes.
+        metadata: props.metadata,
         postedAt: new Date(props.postedAt),
         createdAt: new Date(props.createdAt),
         revertedAt: props.revertedAt === null ? null : new Date(props.revertedAt),
@@ -143,6 +160,11 @@ export class Transaction {
     return this.props.postings;
   }
 
+  /** Immutable: a change gives back a new transaction with a new `Metadata`. */
+  get metadata(): Metadata {
+    return this.props.metadata;
+  }
+
   /** A new `Date` every time, because `Date` objects can be changed. */
   get postedAt(): Date {
     return new Date(this.props.postedAt);
@@ -169,6 +191,44 @@ export class Transaction {
   }
 
   /**
+   * Gives a transaction with these metadata entries added. A key that is
+   * already there gets the new value, and the other keys stay as they are.
+   * The postings and everything else stay as they are.
+   *
+   * Returns this same instance when nothing would change (every key already
+   * has this value), so the caller can compare with `===` and skip the save.
+   * Reverted or not, a transaction can always get metadata.
+   *
+   * @throws {InvalidMetadataError} If `changes` is not an object, has an empty
+   * key, or has a non-string value.
+   * @throws {MetadataLimitExceededError} If a key or a value of `changes` is
+   * too long, or the metadata after the change would have too many keys or be
+   * too big. See `Metadata.merge` for the details.
+   */
+  withMetadata(changes: MetadataEntries): Transaction {
+    const merged = this.props.metadata.merge(changes);
+    if (merged === this.props.metadata) {
+      return this;
+    }
+    return Transaction.from({ ...this.props, metadata: merged });
+  }
+
+  /**
+   * Gives a transaction without this metadata key.
+   *
+   * Returns this same instance when the key is not there, so the caller can
+   * compare with `===` and skip the save. Deleting a key that does not exist
+   * is not an error. It never checks the limits (see `Metadata.remove`).
+   */
+  withoutMetadataKey(key: string): Transaction {
+    const remaining = this.props.metadata.remove(key);
+    if (remaining === this.props.metadata) {
+      return this;
+    }
+    return Transaction.from({ ...this.props, metadata: remaining });
+  }
+
+  /**
    * Makes the NEW transaction that undoes this one: every posting goes the
    * other way, in the opposite order.
    *
@@ -178,7 +238,9 @@ export class Transaction {
    * have to pay `a` before it got the money back.
    *
    * The new transaction has no reference, because a reference belongs to one
-   * transaction. It is not saved and it does not apply anything. The caller
+   * transaction, and no metadata, because metadata describes the facts of one
+   * transaction (an order id, a payment id) and the revert has its own. It is
+   * not saved and it does not apply anything. The caller
    * applies it like any new transaction (`touchedBalances` and `applyTo`),
    * which fails if the money was spent in the meantime. This transaction is
    * not changed: the caller saves that it was reverted.
@@ -198,6 +260,7 @@ export class Transaction {
       ledgerId: this.props.ledgerId,
       reference: null,
       postings: this.props.postings.map((posting) => posting.reversed()).reverse(),
+      metadata: Metadata.empty(),
       postedAt: reversal.at,
       createdAt: reversal.at,
     });

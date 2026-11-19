@@ -68,6 +68,7 @@ describe('transactions (e2e)', () => {
       postings: [{ source: 'world', destination: 'users:1', asset: 'USD', amount: '1050' }],
       postedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/),
       createdAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/),
+      metadata: {},
       revertedAt: null,
       revertedByTransactionId: null,
     });
@@ -517,6 +518,7 @@ describe('transactions (e2e)', () => {
         postings: [{ source: 'users:1', destination: 'world', asset: 'USD', amount: '1000' }],
         postedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/),
         createdAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/),
+        metadata: {},
         revertedAt: null,
         revertedByTransactionId: null,
       });
@@ -683,6 +685,275 @@ describe('transactions (e2e)', () => {
         expect(new Set(responses.map((r) => r.body.id)).size).toBe(1);
         const list = await listTransactions(organizationId).expect(200);
         expect(list.body.data).toHaveLength(2);
+      });
+    });
+  });
+
+  describe('metadata', () => {
+    const metadataUrl = (id: string, ledger = 'main') =>
+      `/ledgers/${ledger}/transactions/${id}/metadata`;
+
+    const saveMetadata = (organizationId: string, id: string, body?: object, ledger = 'main') => {
+      const req = request(app.getHttpServer())
+        .post(metadataUrl(id, ledger))
+        .set(ORGANIZATION_ID_HEADER, organizationId);
+      return body === undefined ? req : req.send(body);
+    };
+
+    const deleteMetadata = (organizationId: string, id: string, key: string, ledger = 'main') =>
+      request(app.getHttpServer())
+        .delete(`${metadataUrl(id, ledger)}/${encodeURIComponent(key)}`)
+        .set(ORGANIZATION_ID_HEADER, organizationId);
+
+    /** Creates a ledger and one transaction with metadata, and returns the ids. */
+    const prepare = async (metadata: Record<string, string> = { orderId: '42' }) => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId);
+      const created = await createTransaction(organizationId, {
+        postings: [posting('world', 'users:1', '1000')],
+        metadata,
+      }).expect(201);
+      return { organizationId, id: created.body.id as string };
+    };
+
+    it('returns the metadata of a new transaction, in create, get and list', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId);
+
+      const created = await createTransaction(organizationId, {
+        postings: [posting('world', 'users:1', '1000')],
+        metadata: { orderId: '42', channel: 'web' },
+      }).expect(201);
+
+      expect(created.body.metadata).toEqual({ orderId: '42', channel: 'web' });
+      const got = await getTransaction(organizationId, created.body.id).expect(200);
+      expect(got.body.metadata).toEqual({ orderId: '42', channel: 'web' });
+      const list = await listTransactions(organizationId).expect(200);
+      expect(list.body.data[0].metadata).toEqual({ orderId: '42', channel: 'web' });
+    });
+
+    it('returns empty metadata for a transaction that has none', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId);
+
+      const created = await createTransaction(organizationId, {
+        postings: [posting('world', 'users:1', '1000')],
+      }).expect(201);
+
+      expect(created.body.metadata).toEqual({});
+    });
+
+    it('adds keys and replaces a key that is there with POST, and keeps the others', async () => {
+      const { organizationId, id } = await prepare({ a: '1', b: '2' });
+
+      const res = await saveMetadata(organizationId, id, { b: '3', c: '4' }).expect(204);
+
+      expect(res.text).toBe('');
+      const got = await getTransaction(organizationId, id).expect(200);
+      expect(got.body.metadata).toEqual({ a: '1', b: '3', c: '4' });
+    });
+
+    it('does not change the postings with a metadata edit', async () => {
+      const { organizationId, id } = await prepare();
+      const before = await getTransaction(organizationId, id).expect(200);
+
+      await saveMetadata(organizationId, id, { note: 'late' }).expect(204);
+
+      const after = await getTransaction(organizationId, id).expect(200);
+      expect(after.body.postings).toEqual(before.body.postings);
+      expect(after.body.postedAt).toBe(before.body.postedAt);
+      expect(after.body.createdAt).toBe(before.body.createdAt);
+    });
+
+    it('removes a key with DELETE, and a repeat is not an error', async () => {
+      const { organizationId, id } = await prepare({ a: '1', b: '2' });
+
+      await deleteMetadata(organizationId, id, 'a').expect(204);
+      await deleteMetadata(organizationId, id, 'a').expect(204);
+      await deleteMetadata(organizationId, id, 'never-there').expect(204);
+
+      const got = await getTransaction(organizationId, id).expect(200);
+      expect(got.body.metadata).toEqual({ b: '2' });
+    });
+
+    it('decodes a key with spaces, slashes and non-ASCII letters in the URL', async () => {
+      const key = 'team name/größe';
+      const { organizationId, id } = await prepare({ [key]: 'x', keep: 'y' });
+
+      await deleteMetadata(organizationId, id, key).expect(204);
+
+      const got = await getTransaction(organizationId, id).expect(200);
+      expect(got.body.metadata).toEqual({ keep: 'y' });
+    });
+
+    it('works on a reverted transaction, and the revert does not copy the metadata', async () => {
+      const { organizationId, id } = await prepare({ orderId: '42' });
+      const reversal = await request(app.getHttpServer())
+        .post(`/ledgers/main/transactions/${id}/revert`)
+        .set(ORGANIZATION_ID_HEADER, organizationId)
+        .expect(201);
+
+      await saveMetadata(organizationId, id, { reason: 'customer asked' }).expect(204);
+
+      expect(reversal.body.metadata).toEqual({});
+      const got = await getTransaction(organizationId, id).expect(200);
+      expect(got.body.metadata).toEqual({ orderId: '42', reason: 'customer asked' });
+      expect(got.body.revertedByTransactionId).toBe(reversal.body.id);
+    });
+
+    describe('Idempotency-Key', () => {
+      it('answers a repeat with the metadata of the first call, even after an edit', async () => {
+        const organizationId = randomUUIDv7();
+        await createLedger(organizationId);
+        const body = {
+          postings: [posting('world', 'users:1', '1000')],
+          metadata: { orderId: '42' },
+        };
+        const first = await createTransaction(organizationId, body)
+          .set('Idempotency-Key', 'key-1')
+          .expect(201);
+        await saveMetadata(organizationId, first.body.id, { note: 'added later' }).expect(204);
+
+        const second = await createTransaction(organizationId, body)
+          .set('Idempotency-Key', 'key-1')
+          .expect(201);
+
+        expect(second.headers['idempotent-replayed']).toBe('true');
+        expect(second.body).toEqual(first.body);
+        expect(second.body.metadata).toEqual({ orderId: '42' });
+      });
+
+      it('returns 422 IDEMPOTENCY_KEY_REUSED when the key is used with other metadata', async () => {
+        const organizationId = randomUUIDv7();
+        await createLedger(organizationId);
+        const postings = [posting('world', 'users:1', '1000')];
+        await createTransaction(organizationId, { postings, metadata: { orderId: '42' } })
+          .set('Idempotency-Key', 'key-1')
+          .expect(201);
+
+        const res = await createTransaction(organizationId, {
+          postings,
+          metadata: { orderId: '43' },
+        })
+          .set('Idempotency-Key', 'key-1')
+          .expect(422);
+
+        expect(res.body.errorCode).toBe('IDEMPOTENCY_KEY_REUSED');
+      });
+    });
+
+    describe('errors', () => {
+      it('returns 404 TRANSACTION_NOT_FOUND for an id that does not exist', async () => {
+        const { organizationId } = await prepare();
+        const missing = randomUUIDv7();
+
+        const saved = await saveMetadata(organizationId, missing, { a: '1' }).expect(404);
+        const deleted = await deleteMetadata(organizationId, missing, 'a').expect(404);
+
+        expect(saved.body.errorCode).toBe('TRANSACTION_NOT_FOUND');
+        expect(deleted.body.errorCode).toBe('TRANSACTION_NOT_FOUND');
+      });
+
+      it('returns 404 LEDGER_NOT_FOUND for a ledger that does not exist', async () => {
+        const { organizationId, id } = await prepare();
+
+        const res = await saveMetadata(organizationId, id, { a: '1' }, 'missing').expect(404);
+
+        expect(res.body.errorCode).toBe('LEDGER_NOT_FOUND');
+      });
+
+      it('returns 404 for the transaction of another organization, and changes nothing', async () => {
+        const { organizationId, id } = await prepare({ a: '1' });
+        const stranger = randomUUIDv7();
+        await createLedger(stranger);
+
+        await saveMetadata(stranger, id, { a: 'changed' }).expect(404);
+        await deleteMetadata(stranger, id, 'a').expect(404);
+
+        const got = await getTransaction(organizationId, id).expect(200);
+        expect(got.body.metadata).toEqual({ a: '1' });
+      });
+
+      it('returns 404 for the transaction of another ledger', async () => {
+        const { organizationId, id } = await prepare({ a: '1' });
+        await createLedger(organizationId, 'other');
+
+        await saveMetadata(organizationId, id, { a: 'changed' }, 'other').expect(404);
+
+        const got = await getTransaction(organizationId, id).expect(200);
+        expect(got.body.metadata).toEqual({ a: '1' });
+      });
+
+      it('returns 400 VALIDATION for an id that is not a UUIDv7', async () => {
+        const { organizationId } = await prepare();
+
+        const saved = await saveMetadata(organizationId, 'not-an-id', { a: '1' }).expect(400);
+        const deleted = await deleteMetadata(organizationId, 'not-an-id', 'a').expect(400);
+
+        expect(saved.body.errorCode).toBe('VALIDATION');
+        expect(deleted.body.errorCode).toBe('VALIDATION');
+      });
+
+      it.each([
+        ['an empty object', {}],
+        ['a number as value', { n: 1 }],
+        ['an empty key', { '': 'x' }],
+      ])('returns 400 VALIDATION for %s', async (_title, body) => {
+        const { organizationId, id } = await prepare();
+
+        const res = await saveMetadata(organizationId, id, body).expect(400);
+
+        expect(res.body.errorCode).toBe('VALIDATION');
+      });
+
+      it('returns 400 VALIDATION for metadata with a number as value in create, and creates nothing', async () => {
+        const organizationId = randomUUIDv7();
+        await createLedger(organizationId);
+
+        const res = await createTransaction(organizationId, {
+          postings: [posting('world', 'users:1', '1000')],
+          metadata: { n: 1 },
+        }).expect(400);
+
+        expect(res.body.errorCode).toBe('VALIDATION');
+        const list = await listTransactions(organizationId).expect(200);
+        expect(list.body.data).toHaveLength(0);
+      });
+
+      it('returns 400 METADATA_LIMIT_EXCEEDED for too many keys, in create and in save', async () => {
+        const { organizationId, id } = await prepare();
+        const tooMany = Object.fromEntries(Array.from({ length: 129 }, (_, i) => [`k${i}`, 'v']));
+
+        const created = await createTransaction(organizationId, {
+          postings: [posting('world', 'users:1', '1')],
+          metadata: tooMany,
+        }).expect(400);
+        const saved = await saveMetadata(organizationId, id, tooMany).expect(400);
+
+        expect(created.body.errorCode).toBe('METADATA_LIMIT_EXCEEDED');
+        expect(saved.body.errorCode).toBe('METADATA_LIMIT_EXCEEDED');
+      });
+
+      it('returns 400 METADATA_LIMIT_EXCEEDED when many small saves would pass the limit together', async () => {
+        const full = Object.fromEntries(Array.from({ length: 128 }, (_, i) => [`k${i}`, 'v']));
+        const { organizationId, id } = await prepare(full);
+
+        const res = await saveMetadata(organizationId, id, { oneMore: 'x' }).expect(400);
+
+        expect(res.body.errorCode).toBe('METADATA_LIMIT_EXCEEDED');
+        const got = await getTransaction(organizationId, id).expect(200);
+        expect(Object.keys(got.body.metadata)).toHaveLength(128);
+      });
+
+      it('returns 400 INVALID_REQUEST without the organization header', async () => {
+        const { id } = await prepare();
+
+        const res = await request(app.getHttpServer())
+          .post(metadataUrl(id))
+          .send({ a: '1' })
+          .expect(400);
+
+        expect(res.body.errorCode).toBe('INVALID_REQUEST');
       });
     });
   });

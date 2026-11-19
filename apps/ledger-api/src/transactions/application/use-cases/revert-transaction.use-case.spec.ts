@@ -41,13 +41,14 @@ const posting = (source: string, destination: string, amount: bigint) =>
   Posting.of(AccountAddress.of(source), AccountAddress.of(destination), Money.of(usd, amount));
 
 /** The transaction to revert: 1000 from world to users:1, then 25 of it to platform:fees. */
-const original = (overrides: { reverted?: boolean } = {}) =>
+const original = (overrides: { reverted?: boolean; metadata?: Record<string, string> } = {}) =>
   Transaction.reconstitute({
     id: ORIGINAL_ID,
     organizationId: ORG_ID,
     ledgerId: LEDGER_ID,
     reference: 'order-1',
     postings: [posting('world', 'users:1', 1000n), posting('users:1', 'platform:fees', 25n)],
+    metadata: Metadata.of(overrides.metadata ?? {}),
     postedAt: new Date('2026-11-16T10:00:00.000Z'),
     createdAt: new Date('2026-11-16T10:00:00.000Z'),
     revertedAt: overrides.reverted ? new Date('2026-11-16T11:00:00.000Z') : null,
@@ -123,6 +124,7 @@ function setup(held: Held = afterOriginal) {
     markReverted: vi.fn<ITransactionRepository['markReverted']>(async () => {
       calls.push('mark reverted');
     }),
+    updateMetadata: vi.fn<ITransactionRepository['updateMetadata']>(),
     findPage: vi.fn<ITransactionRepository['findPage']>(),
   };
   const logs = {
@@ -164,6 +166,16 @@ function setup(held: Held = afterOriginal) {
 const input = { organizationId: ORG_ID, ledgerName: 'main', transactionId: ORIGINAL_ID };
 
 describe('RevertTransactionUseCase', () => {
+  it('saves a reversing transaction with no metadata, even when the original has some', async () => {
+    const { useCase, transactionRepository } = setup();
+    transactionRepository.lockById.mockResolvedValueOnce(original({ metadata: { orderId: '42' } }));
+
+    const { transaction } = await useCase.execute(input);
+
+    expect(transaction.metadata.size).toBe(0);
+    expect(transactionRepository.insert.mock.calls[0]?.[1].metadata.size).toBe(0);
+  });
+
   it('runs inside the transaction of the organization', async () => {
     const { useCase, transactions } = setup();
 
@@ -449,6 +461,7 @@ describe('RevertTransactionUseCase', () => {
         ledgerId: first.ledgerId,
         reference: first.reference,
         postings: [...first.postings],
+        metadata: first.metadata,
         postedAt: first.postedAt,
         createdAt: first.createdAt,
         revertedAt: new Date('2026-11-16T13:00:00.000Z'),
@@ -461,6 +474,22 @@ describe('RevertTransactionUseCase', () => {
 
       expect(transaction.isReverted).toBe(false);
       expect(transaction.revertedByTransactionId).toBeNull();
+    });
+
+    it('answers a replay with a transaction that has no metadata, even if it got some since', async () => {
+      const { useCase, idempotencyKeys, transactionRepository } = setup();
+      const first = original().reverse({
+        id: '0190a5d4-7b3c-7abc-8def-0123456789b0',
+        at: new Date('2026-11-16T12:00:00.000Z'),
+      });
+      const edited = first.withMetadata({ reason: 'added after the first call' });
+      idempotencyKeys.claim.mockResolvedValueOnce({ replayed: true, transactionId: first.id });
+      transactionRepository.findById.mockResolvedValueOnce(edited);
+
+      const { transaction } = await useCase.execute(keyed);
+
+      expect(transaction.id).toBe(first.id);
+      expect(transaction.metadata.size).toBe(0);
     });
 
     it('passes IdempotencyKeyReusedError through and writes nothing', async () => {

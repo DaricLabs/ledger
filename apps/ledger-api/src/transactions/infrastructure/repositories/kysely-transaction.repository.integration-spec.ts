@@ -1,4 +1,4 @@
-import { AccountAddress, AssetCode, Money } from '@ledger/domain';
+import { AccountAddress, AssetCode, Metadata, Money } from '@ledger/domain';
 import {
   createDb,
   SqlState,
@@ -16,6 +16,7 @@ import type {
   ITransactionPage,
   ITransactionPageQuery,
 } from '../../application/ports/transaction-repository.port.js';
+import { KyselyLedgerLogWriter } from '../../../journal/infrastructure/adapters/kysely-ledger-log-writer.adapter.js';
 import { KyselyAccountBalanceRepository } from '../../../accounts/infrastructure/repositories/kysely-account-balance.repository.js';
 import { KyselyTransactionRepository } from './kysely-transaction.repository.js';
 
@@ -24,6 +25,7 @@ import { KyselyTransactionRepository } from './kysely-transaction.repository.js'
 const ids = new Uuidv7IdGenerator();
 const repository = new KyselyTransactionRepository();
 const balances = new KyselyAccountBalanceRepository();
+const logs = new KyselyLedgerLogWriter();
 let db: LedgerDatabase;
 
 beforeAll(() => {
@@ -70,6 +72,7 @@ const makeTransaction = (
     ledgerId,
     reference,
     postings: [posting('world', 'a', 100n), posting('a', 'b', 30n)],
+    metadata: Metadata.empty(),
     postedAt: new Date('2026-11-07T10:00:00.000Z'),
     createdAt: new Date('2026-11-07T10:00:01.000Z'),
   });
@@ -162,6 +165,7 @@ describe('KyselyTransactionRepository.insert', () => {
           ledgerId,
           reference: null,
           postings: [posting('world', 'nobody', 1n)],
+          metadata: Metadata.empty(),
           postedAt: new Date(),
           createdAt: new Date(),
         }),
@@ -230,6 +234,7 @@ describe('KyselyTransactionRepository.findById', () => {
         reference: null,
         // The amounts are the order: 1, 2, ... 12.
         postings: Array.from({ length: 12 }, (_, i) => posting('world', 'a', BigInt(i + 1))),
+        metadata: Metadata.empty(),
         postedAt: new Date('2026-11-07T10:00:00.000Z'),
         createdAt: new Date('2026-11-07T10:00:01.000Z'),
       });
@@ -254,6 +259,7 @@ describe('KyselyTransactionRepository.findById', () => {
         ledgerId,
         reference: null,
         postings: [posting('world', 'a', big)],
+        metadata: Metadata.empty(),
         postedAt: new Date('2026-11-07T10:00:00.000Z'),
         createdAt: new Date('2026-11-07T10:00:01.000Z'),
       });
@@ -325,6 +331,7 @@ describe('KyselyTransactionRepository.findPage', () => {
       ledgerId,
       reference: null,
       postings: [posting('world', 'a', amount)],
+      metadata: Metadata.empty(),
       postedAt,
       createdAt: postedAt,
     });
@@ -398,6 +405,7 @@ describe('KyselyTransactionRepository.findPage', () => {
             postings: Array.from({ length: count }, (_, place) =>
               posting('world', 'a', BigInt((index + 1) * 10 + place)),
             ),
+            metadata: Metadata.empty(),
             postedAt: at(index),
             createdAt: at(index),
           }),
@@ -777,5 +785,263 @@ describe('revert state', () => {
 
     expect(seenBySecond?.isReverted).toBe(true);
     expect(seenBySecond?.revertedByTransactionId).toBe(reversal.id);
+  });
+});
+
+describe('metadata', () => {
+  /** Saves a transaction with this metadata and returns it with its ledger id. */
+  async function saveWithMetadata(
+    trx: TenantTransaction,
+    organizationId: string,
+    entries: Record<string, string>,
+  ) {
+    const ledgerId = await prepareLedger(trx, organizationId);
+    const created = Transaction.create({
+      id: ids.next(),
+      organizationId,
+      ledgerId,
+      reference: 'ref-1',
+      postings: [posting('world', 'a', 100n), posting('a', 'b', 30n)],
+      metadata: Metadata.of(entries),
+      postedAt: new Date('2026-11-07T10:00:00.000Z'),
+      createdAt: new Date('2026-11-07T10:00:01.000Z'),
+    });
+    await repository.insert(trx, created);
+    return { ledgerId, created };
+  }
+
+  it('saves the metadata with the transaction, and findById, lockById and findPage read it', async () => {
+    const organizationId = ids.next();
+
+    const { row, byId, locked, page } = await withTenant(db, organizationId, async (trx) => {
+      const { ledgerId, created } = await saveWithMetadata(trx, organizationId, {
+        orderId: '42',
+        channel: 'web',
+      });
+      return {
+        row: await unwrapTenantTransaction(trx)
+          .selectFrom('transactions')
+          .select('metadata')
+          .executeTakeFirstOrThrow(),
+        byId: await repository.findById(trx, ledgerId, created.id),
+        locked: await repository.lockById(trx, ledgerId, created.id),
+        page: await repository.findPage(trx, ledgerId, { limit: 10 }),
+      };
+    });
+
+    expect(row.metadata).toEqual({ orderId: '42', channel: 'web' });
+    for (const read of [byId, locked, page.transactions[0]]) {
+      expect(read?.metadata).toBeInstanceOf(Metadata);
+      expect(read?.metadata.entries).toEqual({ orderId: '42', channel: 'web' });
+    }
+  });
+
+  it('reads a transaction with no metadata as empty metadata', async () => {
+    const organizationId = ids.next();
+
+    const found = await withTenant(db, organizationId, async (trx) => {
+      const { ledgerId, created } = await saveWithMetadata(trx, organizationId, {});
+      return repository.findById(trx, ledgerId, created.id);
+    });
+
+    expect(found?.metadata.size).toBe(0);
+  });
+
+  it('keeps empty values, quotes and non-ASCII text as they were', async () => {
+    const organizationId = ids.next();
+    const entries = {
+      empty: '',
+      quote: 'say "hi" and a \\ backslash',
+      text: 'größe 🚀',
+      'key with spaces/and slash': 'x',
+    };
+
+    const found = await withTenant(db, organizationId, async (trx) => {
+      const { ledgerId, created } = await saveWithMetadata(trx, organizationId, entries);
+      return repository.findById(trx, ledgerId, created.id);
+    });
+
+    expect(found?.metadata.entries).toEqual(entries);
+  });
+
+  describe('updateMetadata', () => {
+    it('saves new metadata, and findById reads it', async () => {
+      const organizationId = ids.next();
+
+      const found = await withTenant(db, organizationId, async (trx) => {
+        const { ledgerId, created } = await saveWithMetadata(trx, organizationId, { a: '1' });
+        const locked = await repository.lockById(trx, ledgerId, created.id);
+        await repository.updateMetadata(trx, locked!.withMetadata({ b: '2' }));
+        return repository.findById(trx, ledgerId, created.id);
+      });
+
+      expect(found?.metadata.entries).toEqual({ a: '1', b: '2' });
+    });
+
+    it('removes a key', async () => {
+      const organizationId = ids.next();
+
+      const found = await withTenant(db, organizationId, async (trx) => {
+        const { ledgerId, created } = await saveWithMetadata(trx, organizationId, {
+          a: '1',
+          b: '2',
+        });
+        await repository.updateMetadata(trx, created.withoutMetadataKey('a'));
+        return repository.findById(trx, ledgerId, created.id);
+      });
+
+      expect(found?.metadata.entries).toEqual({ b: '2' });
+    });
+
+    it('changes nothing but the metadata: not the postings, the dates, the reference or the revert mark', async () => {
+      const organizationId = ids.next();
+
+      const { before, after } = await withTenant(db, organizationId, async (trx) => {
+        const { ledgerId, created } = await saveWithMetadata(trx, organizationId, { a: '1' });
+        const reversal = created.reverse({
+          id: ids.next(),
+          at: new Date('2026-11-08T12:00:00.000Z'),
+        });
+        await repository.insert(trx, reversal);
+        await repository.markReverted(trx, ledgerId, created.id, reversal);
+        const reverted = await repository.findById(trx, ledgerId, created.id);
+        await repository.updateMetadata(trx, reverted!.withMetadata({ note: 'late' }));
+        return { before: reverted!, after: await repository.findById(trx, ledgerId, created.id) };
+      });
+
+      expect(after?.metadata.entries).toEqual({ a: '1', note: 'late' });
+      expect(after?.reference).toBe(before.reference);
+      expect(after?.postedAt).toEqual(before.postedAt);
+      expect(after?.createdAt).toEqual(before.createdAt);
+      expect(after?.revertedAt).toEqual(before.revertedAt);
+      expect(after?.revertedByTransactionId).toBe(before.revertedByTransactionId);
+      expect(after?.postings).toEqual(before.postings);
+    });
+
+    it('does not change the metadata of other transactions', async () => {
+      const organizationId = ids.next();
+
+      const other = await withTenant(db, organizationId, async (trx) => {
+        const { ledgerId, created } = await saveWithMetadata(trx, organizationId, { a: '1' });
+        const second = makeTransaction(organizationId, ledgerId, 'ref-2');
+        await repository.insert(trx, second);
+        await repository.updateMetadata(trx, created.withMetadata({ b: '2' }));
+        return repository.findById(trx, ledgerId, second.id);
+      });
+
+      expect(other?.metadata.size).toBe(0);
+    });
+
+    it('refuses a transaction that is not saved, and says it is a bug', async () => {
+      const organizationId = ids.next();
+
+      await expect(
+        withTenant(db, organizationId, async (trx) => {
+          const ledgerId = await prepareLedger(trx, organizationId);
+          const unsaved = makeTransaction(organizationId, ledgerId, null);
+          await repository.updateMetadata(trx, unsaved.withMetadata({ a: '1' }));
+        }),
+      ).rejects.toThrow('Expected to update 1 transaction row, but updated 0');
+    });
+
+    it('refuses a transaction of another organization (row-level security hides it)', async () => {
+      const organizationId = ids.next();
+      const { created } = await withTenant(db, organizationId, (trx) =>
+        saveWithMetadata(trx, organizationId, { a: '1' }),
+      );
+
+      await expect(
+        withTenant(db, ids.next(), (trx) =>
+          repository.updateMetadata(trx, created.withMetadata({ a: 'stolen' })),
+        ),
+      ).rejects.toThrow('Expected to update 1 transaction row, but updated 0');
+
+      const kept = await withTenant(db, organizationId, (trx) =>
+        repository.findById(trx, created.ledgerId, created.id),
+      );
+      expect(kept?.metadata.entries).toEqual({ a: '1' });
+    });
+  });
+
+  describe('lockById', () => {
+    it('makes a second lockById wait, and then shows it the metadata of the first', async () => {
+      const organizationId = ids.next();
+      const { ledgerId, created } = await withTenant(db, organizationId, (trx) =>
+        saveWithMetadata(trx, organizationId, { a: '1' }),
+      );
+
+      let releaseFirst!: () => void;
+      const firstMayEnd = new Promise<void>((resolve) => (releaseFirst = resolve));
+      let firstHoldsLock!: () => void;
+      const firstHasLock = new Promise<void>((resolve) => (firstHoldsLock = resolve));
+
+      const first = withTenant(db, organizationId, async (trx) => {
+        const locked = await repository.lockById(trx, ledgerId, created.id);
+        firstHoldsLock();
+        await firstMayEnd;
+        await repository.updateMetadata(trx, locked!.withMetadata({ b: '2' }));
+      });
+      await firstHasLock;
+
+      let secondDone = false;
+      const second = withTenant(db, organizationId, async (trx) => {
+        const found = await repository.lockById(trx, ledgerId, created.id);
+        secondDone = true;
+        return found;
+      });
+
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(secondDone).toBe(false);
+      } finally {
+        // Always release, so a failed assertion cannot leave the row locked.
+        releaseFirst();
+      }
+      await first;
+      const seenBySecond = await second;
+
+      // The second one did not read the old metadata and lose the first edit.
+      expect(seenBySecond?.metadata.entries).toEqual({ a: '1', b: '2' });
+    });
+
+    it('does not block a journal entry about the transaction (its lock is for non-key columns)', async () => {
+      const organizationId = ids.next();
+      const { ledgerId, created } = await withTenant(db, organizationId, (trx) =>
+        saveWithMetadata(trx, organizationId, { a: '1' }),
+      );
+
+      let releaseFirst!: () => void;
+      const firstMayEnd = new Promise<void>((resolve) => (releaseFirst = resolve));
+      let firstHoldsLock!: () => void;
+      const firstHasLock = new Promise<void>((resolve) => (firstHoldsLock = resolve));
+
+      const first = withTenant(db, organizationId, async (trx) => {
+        await repository.lockById(trx, ledgerId, created.id);
+        firstHoldsLock();
+        await firstMayEnd;
+      });
+      await firstHasLock;
+
+      // The journal entry points to the locked row (a foreign key), and it must not have to wait.
+      const entry = withTenant(db, organizationId, (trx) =>
+        logs.append(trx, {
+          ledgerId,
+          type: 'TRANSACTION_METADATA_SAVED',
+          transactionId: created.id,
+          payload: { transactionId: created.id, metadata: { b: '2' } },
+        }),
+      );
+      try {
+        const outcome = await Promise.race([
+          entry.then(() => 'done'),
+          new Promise((resolve) => setTimeout(() => resolve('blocked'), 2000)),
+        ]);
+        expect(outcome).toBe('done');
+      } finally {
+        releaseFirst();
+      }
+      await first;
+      await entry;
+    });
   });
 });

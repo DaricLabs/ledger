@@ -1,7 +1,15 @@
 import { randomUUIDv7 } from 'node:crypto';
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { AccountAddress, AssetCode, InvalidAccountAddressError, Money } from '@ledger/domain';
+import {
+  AccountAddress,
+  AssetCode,
+  InvalidAccountAddressError,
+  InvalidMetadataError,
+  Metadata,
+  MetadataLimitExceededError,
+  Money,
+} from '@ledger/domain';
 import { LoggerModule } from 'nestjs-pino';
 import request from 'supertest';
 import type { App } from 'supertest/types.js';
@@ -10,9 +18,11 @@ import { ORGANIZATION_ID_HEADER } from '../../../core/tenant/tenant.guard.js';
 import { ValidationModule } from '../../../core/validation/validation.module.js';
 import { LedgerNotFoundError } from '../../../ledgers/domain/errors/ledger-not-found.error.js';
 import { CreateTransactionUseCase } from '../../application/use-cases/create-transaction.use-case.js';
+import { DeleteTransactionMetadataUseCase } from '../../application/use-cases/delete-transaction-metadata.use-case.js';
 import { GetTransactionUseCase } from '../../application/use-cases/get-transaction.use-case.js';
 import { ListTransactionsUseCase } from '../../application/use-cases/list-transactions.use-case.js';
 import { RevertTransactionUseCase } from '../../application/use-cases/revert-transaction.use-case.js';
+import { SaveTransactionMetadataUseCase } from '../../application/use-cases/save-transaction-metadata.use-case.js';
 import { InsufficientFundsError } from '../../../accounts/domain/errors/insufficient-funds.error.js';
 import { IdempotencyKeyReusedError } from '../../../idempotency/domain/errors/idempotency-key-reused.error.js';
 import { InvalidPostingError } from '../../domain/errors/invalid-posting.error.js';
@@ -33,6 +43,8 @@ describe('TransactionsController', () => {
   const executeGet = vi.fn<GetTransactionUseCase['execute']>();
   const executeList = vi.fn<ListTransactionsUseCase['execute']>();
   const executeRevert = vi.fn<RevertTransactionUseCase['execute']>();
+  const executeSaveMetadata = vi.fn<SaveTransactionMetadataUseCase['execute']>();
+  const executeDeleteMetadata = vi.fn<DeleteTransactionMetadataUseCase['execute']>();
   const organizationId = randomUUIDv7();
   let app: INestApplication<App>;
 
@@ -49,6 +61,8 @@ describe('TransactionsController', () => {
         { provide: GetTransactionUseCase, useValue: { execute: executeGet } },
         { provide: ListTransactionsUseCase, useValue: { execute: executeList } },
         { provide: RevertTransactionUseCase, useValue: { execute: executeRevert } },
+        { provide: SaveTransactionMetadataUseCase, useValue: { execute: executeSaveMetadata } },
+        { provide: DeleteTransactionMetadataUseCase, useValue: { execute: executeDeleteMetadata } },
       ],
     }).compile();
     app = moduleRef.createNestApplication();
@@ -64,6 +78,8 @@ describe('TransactionsController', () => {
     executeGet.mockReset();
     executeList.mockReset();
     executeRevert.mockReset();
+    executeSaveMetadata.mockReset();
+    executeDeleteMetadata.mockReset();
     // Builds a transaction from the input, like the real use case does.
     execute.mockImplementation(async (input) => ({
       replayed: false,
@@ -72,6 +88,7 @@ describe('TransactionsController', () => {
         organizationId: input.organizationId,
         ledgerId: '0190a5d4-7b3c-7abc-8def-0123456789ac',
         reference: input.reference ?? null,
+        metadata: Metadata.of(input.metadata ?? {}),
         postings: input.postings.map((p) =>
           Posting.of(
             AccountAddress.of(p.source),
@@ -105,6 +122,7 @@ describe('TransactionsController', () => {
         id: '0190a5d4-7b3c-7abc-8def-0123456789ab',
         reference: 'order-1',
         postings: [{ source: 'world', destination: 'users:1', asset: 'USD', amount: '1050' }],
+        metadata: {},
         postedAt: '2026-11-07T10:00:00.000Z',
         createdAt: '2026-11-07T10:00:01.000Z',
         revertedAt: null,
@@ -134,6 +152,7 @@ describe('TransactionsController', () => {
         ledgerName: 'my-ledger',
         reference: 'order-1',
         postings: [{ source: 'world', destination: 'users:1', asset: 'USD', amount: 1050n }],
+        metadata: {},
         idempotencyKey: undefined,
       });
     });
@@ -146,6 +165,68 @@ describe('TransactionsController', () => {
 
       expect(res.body.postings[0].amount).toBe(amount);
       expect(execute.mock.calls[0]?.[0].postings[0]?.amount).toBe(10n ** 78n - 1n);
+    });
+  });
+
+  describe('metadata in the body', () => {
+    it('gives the metadata to the use case and shows it in the response', async () => {
+      const res = await post({ ...validBody, metadata: { orderId: '42', channel: 'web' } }).expect(
+        201,
+      );
+
+      expect(execute).toHaveBeenCalledWith(
+        expect.objectContaining({ metadata: { orderId: '42', channel: 'web' } }),
+      );
+      expect(res.body.metadata).toEqual({ orderId: '42', channel: 'web' });
+    });
+
+    it('uses empty metadata when the body has none', async () => {
+      const res = await post(validBody).expect(201);
+
+      expect(execute).toHaveBeenCalledWith(expect.objectContaining({ metadata: {} }));
+      expect(res.body.metadata).toEqual({});
+    });
+
+    it.each([
+      ['metadata is an array', ['a'], 'metadata'],
+      ['metadata is null', null, 'metadata'],
+      ['a value is a number', { n: 1 }, 'metadata.n'],
+      ['a value is an object', { o: {} }, 'metadata.o'],
+      ['a key is empty', { '': 'x' }, 'metadata.'],
+    ])('returns 400 VALIDATION when %s', async (_title, metadata, path) => {
+      const res = await post({ ...validBody, metadata }).expect(400);
+
+      expect(res.body.errorCode).toBe('VALIDATION');
+      expect(res.body.details).toEqual(expect.arrayContaining([expect.objectContaining({ path })]));
+      expect(execute).not.toHaveBeenCalled();
+    });
+
+    it('does not echo metadata values in the error', async () => {
+      const res = await post({ ...validBody, metadata: { token: 12345678 } }).expect(400);
+
+      expect(JSON.stringify(res.body)).not.toContain('12345678');
+    });
+
+    it('returns 400 INVALID_METADATA for metadata the domain refuses', async () => {
+      execute.mockRejectedValue(new InvalidMetadataError('Metadata keys must not be empty'));
+
+      const res = await post({ ...validBody, metadata: { a: 'b' } }).expect(400);
+
+      expect(res.body).toEqual({
+        errorCode: 'INVALID_METADATA',
+        errorMessage: 'Metadata keys must not be empty',
+      });
+    });
+
+    it('returns 400 METADATA_LIMIT_EXCEEDED for metadata that is too big', async () => {
+      execute.mockRejectedValue(new MetadataLimitExceededError('total', 65536));
+
+      const res = await post({ ...validBody, metadata: { a: 'b' } }).expect(400);
+
+      expect(res.body).toEqual({
+        errorCode: 'METADATA_LIMIT_EXCEEDED',
+        errorMessage: 'Metadata can be at most 65536 bytes in total (keys and values together)',
+      });
     });
   });
 
@@ -363,6 +444,7 @@ describe('TransactionsController', () => {
             Money.of(AssetCode.of('USD'), 1050n),
           ),
         ],
+        metadata: Metadata.empty(),
         postedAt: new Date('2026-11-07T10:00:00.000Z'),
         createdAt: new Date('2026-11-07T10:00:01.000Z'),
         revertedAt: null,
@@ -388,6 +470,7 @@ describe('TransactionsController', () => {
         id: transactionId,
         reference: 'order-1',
         postings: [{ source: 'world', destination: 'users:1', asset: 'USD', amount: '1050' }],
+        metadata: {},
         postedAt: '2026-11-07T10:00:00.000Z',
         createdAt: '2026-11-07T10:00:01.000Z',
         revertedAt: null,
@@ -465,6 +548,7 @@ describe('TransactionsController', () => {
             Money.of(AssetCode.of('USD'), 1050n),
           ),
         ],
+        metadata: Metadata.empty(),
         postedAt: new Date(postedAt),
         createdAt: new Date(postedAt),
         revertedAt: null,
@@ -500,6 +584,7 @@ describe('TransactionsController', () => {
               id: first.id,
               reference: null,
               postings: [{ source: 'world', destination: 'users:1', asset: 'USD', amount: '1050' }],
+              metadata: {},
               postedAt: '2026-11-07T11:00:00.000Z',
               createdAt: '2026-11-07T11:00:00.000Z',
               revertedAt: null,
@@ -662,6 +747,7 @@ describe('TransactionsController', () => {
             Money.of(AssetCode.of('USD'), 1050n),
           ),
         ],
+        metadata: Metadata.empty(),
         postedAt: new Date('2026-11-08T10:00:00.000Z'),
         createdAt: new Date('2026-11-08T10:00:00.000Z'),
       });
@@ -687,6 +773,7 @@ describe('TransactionsController', () => {
         id: reversalId,
         reference: null,
         postings: [{ source: 'users:1', destination: 'world', asset: 'USD', amount: '1050' }],
+        metadata: {},
         postedAt: '2026-11-08T10:00:00.000Z',
         createdAt: '2026-11-08T10:00:00.000Z',
         revertedAt: null,
@@ -811,6 +898,271 @@ describe('TransactionsController', () => {
         await revert(transactionId, 'main', null).expect(400);
 
         expect(executeRevert).not.toHaveBeenCalled();
+      });
+    });
+  });
+
+  describe('POST /ledgers/:ledgerName/transactions/:transactionId/metadata', () => {
+    const transactionId = '0190a5d4-7b3c-7abc-8def-0123456789ab';
+
+    /** `org` is the header value. Pass `null` to send no header at all. */
+    const save = (
+      body?: unknown,
+      id: string = transactionId,
+      ledger = 'main',
+      org: string | null = organizationId,
+    ) => {
+      const req = request(app.getHttpServer()).post(
+        `/ledgers/${ledger}/transactions/${id}/metadata`,
+      );
+      if (org !== null) req.set(ORGANIZATION_ID_HEADER, org);
+      return body === undefined ? req : req.send(body as object);
+    };
+
+    describe('success', () => {
+      beforeEach(() => {
+        executeSaveMetadata.mockResolvedValue(undefined);
+      });
+
+      it('returns 204 with no body', async () => {
+        const res = await save({ orderId: '42' }).expect(204);
+
+        expect(res.body).toEqual({});
+        expect(res.text).toBe('');
+      });
+
+      it('gives the use case the organization, the ledger name, the id and the body as metadata', async () => {
+        await save({ orderId: '42', note: 'late' }, transactionId, 'my-ledger').expect(204);
+
+        expect(executeSaveMetadata).toHaveBeenCalledExactlyOnceWith({
+          organizationId,
+          ledgerName: 'my-ledger',
+          transactionId,
+          metadata: { orderId: '42', note: 'late' },
+        });
+      });
+
+      it('accepts an empty string as a value', async () => {
+        await save({ note: '' }).expect(204);
+
+        expect(executeSaveMetadata).toHaveBeenCalledWith(
+          expect.objectContaining({ metadata: { note: '' } }),
+        );
+      });
+
+      it('drops a "__proto__" key and does not pollute the object', async () => {
+        // Raw text on purpose: an object literal with `__proto__` would not make an own key.
+        await request(app.getHttpServer())
+          .post(`/ledgers/main/transactions/${transactionId}/metadata`)
+          .set(ORGANIZATION_ID_HEADER, organizationId)
+          .set('Content-Type', 'application/json')
+          .send('{"__proto__":"x","orderId":"42"}')
+          .expect(204);
+
+        const { metadata } = executeSaveMetadata.mock.calls[0]![0];
+        expect(Object.keys(metadata)).toEqual(['orderId']);
+        expect(Object.getPrototypeOf(metadata)).toBe(Object.prototype);
+      });
+    });
+
+    describe('tenant header', () => {
+      it('returns 400 INVALID_REQUEST when the header is missing', async () => {
+        const res = await save({ orderId: '42' }, transactionId, 'main', null).expect(400);
+
+        expect(res.body.errorCode).toBe('INVALID_REQUEST');
+        expect(executeSaveMetadata).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('validation', () => {
+      it('returns 400 VALIDATION for a ledger name with a wrong shape', async () => {
+        const res = await save({ orderId: '42' }, transactionId, 'Not_Valid').expect(400);
+
+        expect(res.body.errorCode).toBe('VALIDATION');
+        expect(executeSaveMetadata).not.toHaveBeenCalled();
+      });
+
+      it.each(['not-a-uuid', '0190a5d4-7b3c-4abc-8def-0123456789ab'])(
+        'returns 400 VALIDATION for the transaction id %j',
+        async (id) => {
+          const res = await save({ orderId: '42' }, id).expect(400);
+
+          expect(res.body.errorCode).toBe('VALIDATION');
+          expect(executeSaveMetadata).not.toHaveBeenCalled();
+        },
+      );
+
+      it.each([
+        ['the body is an empty object', {}],
+        ['the body is an array', ['a']],
+        ['a value is a number', { n: 1 }],
+        ['a value is null', { n: null }],
+        ['a value is an object', { o: {} }],
+        ['a key is empty', { '': 'x' }],
+      ])('returns 400 VALIDATION when %s', async (_title, body) => {
+        const res = await save(body).expect(400);
+
+        expect(res.body.errorCode).toBe('VALIDATION');
+        expect(executeSaveMetadata).not.toHaveBeenCalled();
+      });
+
+      it('returns 400 VALIDATION when there is no body', async () => {
+        const res = await save().expect(400);
+
+        expect(res.body.errorCode).toBe('VALIDATION');
+        expect(executeSaveMetadata).not.toHaveBeenCalled();
+      });
+
+      it('does not echo metadata values in the error', async () => {
+        const res = await save({ token: 12345678 }).expect(400);
+
+        expect(JSON.stringify(res.body)).not.toContain('12345678');
+      });
+    });
+
+    describe('errors', () => {
+      it('returns 404 LEDGER_NOT_FOUND when there is no such ledger', async () => {
+        executeSaveMetadata.mockRejectedValue(new LedgerNotFoundError('main'));
+
+        const res = await save({ orderId: '42' }).expect(404);
+
+        expect(res.body.errorCode).toBe('LEDGER_NOT_FOUND');
+      });
+
+      it('returns 404 TRANSACTION_NOT_FOUND when the ledger has no such transaction', async () => {
+        executeSaveMetadata.mockRejectedValue(new TransactionNotFoundError(transactionId));
+
+        const res = await save({ orderId: '42' }).expect(404);
+
+        expect(res.body.errorCode).toBe('TRANSACTION_NOT_FOUND');
+      });
+
+      it('returns 400 INVALID_METADATA for metadata the domain refuses', async () => {
+        executeSaveMetadata.mockRejectedValue(
+          new InvalidMetadataError('Metadata keys must not be empty'),
+        );
+
+        const res = await save({ orderId: '42' }).expect(400);
+
+        expect(res.body).toEqual({
+          errorCode: 'INVALID_METADATA',
+          errorMessage: 'Metadata keys must not be empty',
+        });
+      });
+
+      it('returns 400 METADATA_LIMIT_EXCEEDED for metadata that is too big', async () => {
+        executeSaveMetadata.mockRejectedValue(new MetadataLimitExceededError('entries', 128));
+
+        const res = await save({ orderId: '42' }).expect(400);
+
+        expect(res.body.errorCode).toBe('METADATA_LIMIT_EXCEEDED');
+      });
+
+      it('returns 500 INTERNAL, with no details, for an unknown error', async () => {
+        executeSaveMetadata.mockRejectedValue(new Error('connect ECONNREFUSED 10.0.0.5:5432'));
+
+        const res = await save({ orderId: '42' }).expect(500);
+
+        expect(res.body).toEqual({ errorCode: 'INTERNAL', errorMessage: 'Internal server error' });
+      });
+    });
+  });
+
+  describe('DELETE /ledgers/:ledgerName/transactions/:transactionId/metadata/:key', () => {
+    const transactionId = '0190a5d4-7b3c-7abc-8def-0123456789ab';
+
+    /** `org` is the header value. Pass `null` to send no header at all. */
+    const remove = (
+      key: string,
+      id: string = transactionId,
+      ledger = 'main',
+      org: string | null = organizationId,
+    ) => {
+      const req = request(app.getHttpServer()).delete(
+        `/ledgers/${ledger}/transactions/${id}/metadata/${key}`,
+      );
+      if (org !== null) req.set(ORGANIZATION_ID_HEADER, org);
+      return req;
+    };
+
+    describe('success', () => {
+      beforeEach(() => {
+        executeDeleteMetadata.mockResolvedValue(undefined);
+      });
+
+      it('returns 204 with no body', async () => {
+        const res = await remove('orderId').expect(204);
+
+        expect(res.body).toEqual({});
+        expect(res.text).toBe('');
+      });
+
+      it('gives the use case the organization, the ledger name, the id and the key', async () => {
+        await remove('orderId', transactionId, 'my-ledger').expect(204);
+
+        expect(executeDeleteMetadata).toHaveBeenCalledExactlyOnceWith({
+          organizationId,
+          ledgerName: 'my-ledger',
+          transactionId,
+          key: 'orderId',
+        });
+      });
+
+      it('decodes the key: spaces, slashes and non-ASCII letters work', async () => {
+        const key = 'team name/größe';
+
+        await remove(encodeURIComponent(key)).expect(204);
+
+        expect(executeDeleteMetadata).toHaveBeenCalledWith(expect.objectContaining({ key }));
+      });
+    });
+
+    describe('tenant header and validation', () => {
+      it('returns 400 INVALID_REQUEST when the header is missing', async () => {
+        const res = await remove('orderId', transactionId, 'main', null).expect(400);
+
+        expect(res.body.errorCode).toBe('INVALID_REQUEST');
+        expect(executeDeleteMetadata).not.toHaveBeenCalled();
+      });
+
+      it('returns 400 VALIDATION for a ledger name with a wrong shape', async () => {
+        const res = await remove('orderId', transactionId, 'Not_Valid').expect(400);
+
+        expect(res.body.errorCode).toBe('VALIDATION');
+        expect(executeDeleteMetadata).not.toHaveBeenCalled();
+      });
+
+      it('returns 400 VALIDATION for a transaction id with a wrong shape', async () => {
+        const res = await remove('orderId', 'not-a-uuid').expect(400);
+
+        expect(res.body.errorCode).toBe('VALIDATION');
+        expect(executeDeleteMetadata).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('errors', () => {
+      it('returns 404 LEDGER_NOT_FOUND when there is no such ledger', async () => {
+        executeDeleteMetadata.mockRejectedValue(new LedgerNotFoundError('main'));
+
+        const res = await remove('orderId').expect(404);
+
+        expect(res.body.errorCode).toBe('LEDGER_NOT_FOUND');
+      });
+
+      it('returns 404 TRANSACTION_NOT_FOUND when the ledger has no such transaction', async () => {
+        executeDeleteMetadata.mockRejectedValue(new TransactionNotFoundError(transactionId));
+
+        const res = await remove('orderId').expect(404);
+
+        expect(res.body.errorCode).toBe('TRANSACTION_NOT_FOUND');
+      });
+
+      it('returns 500 INTERNAL, with no details, for an unknown error', async () => {
+        executeDeleteMetadata.mockRejectedValue(new Error('connect ECONNREFUSED 10.0.0.5:5432'));
+
+        const res = await remove('orderId').expect(500);
+
+        expect(res.body).toEqual({ errorCode: 'INTERNAL', errorMessage: 'Internal server error' });
       });
     });
   });

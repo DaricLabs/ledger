@@ -34,6 +34,7 @@ const storedTransaction = Transaction.reconstitute({
       Money.of(AssetCode.of('USD'), 100n),
     ),
   ],
+  metadata: Metadata.empty(),
   postedAt: new Date('2026-11-08T10:00:00.000Z'),
   createdAt: new Date('2026-11-08T10:00:01.000Z'),
   revertedAt: null,
@@ -73,6 +74,7 @@ function setup() {
     }),
     lockById: vi.fn<ITransactionRepository['lockById']>(),
     markReverted: vi.fn<ITransactionRepository['markReverted']>(),
+    updateMetadata: vi.fn<ITransactionRepository['updateMetadata']>(),
     findPage: vi.fn<ITransactionRepository['findPage']>(),
   };
 

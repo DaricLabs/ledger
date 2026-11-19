@@ -2,6 +2,7 @@ import { ConfigModule } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import { LoggerModule } from 'nestjs-pino';
 import type { INestApplication } from '@nestjs/common';
+import { MetadataLimitExceededError } from '@ledger/domain';
 import { unwrapTenantTransaction, withTenant, type LedgerDatabase } from '@ledger/database/storage';
 import { KYSELY_DB } from '../core/database/database.constant.js';
 import { Uuidv7IdGenerator } from '../ids/infrastructure/adapters/uuidv7-id-generator.adapter.js';
@@ -12,9 +13,11 @@ import {
   CreateTransactionUseCase,
   type ICreateTransactionInput,
 } from './application/use-cases/create-transaction.use-case.js';
+import { DeleteTransactionMetadataUseCase } from './application/use-cases/delete-transaction-metadata.use-case.js';
 import { GetTransactionUseCase } from './application/use-cases/get-transaction.use-case.js';
 import { ListTransactionsUseCase } from './application/use-cases/list-transactions.use-case.js';
 import { RevertTransactionUseCase } from './application/use-cases/revert-transaction.use-case.js';
+import { SaveTransactionMetadataUseCase } from './application/use-cases/save-transaction-metadata.use-case.js';
 import { InsufficientFundsError } from '../accounts/domain/errors/insufficient-funds.error.js';
 import { TransactionAlreadyRevertedError } from './domain/errors/transaction-already-reverted.error.js';
 import { TransactionNotFoundError } from './domain/errors/transaction-not-found.error.js';
@@ -33,6 +36,8 @@ describe('TransactionsModule (real database)', () => {
   let getTransaction: GetTransactionUseCase;
   let listTransactions: ListTransactionsUseCase;
   let revertTransaction: RevertTransactionUseCase;
+  let saveMetadata: SaveTransactionMetadataUseCase;
+  let deleteMetadata: DeleteTransactionMetadataUseCase;
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -55,6 +60,8 @@ describe('TransactionsModule (real database)', () => {
     getTransaction = app.get(GetTransactionUseCase);
     listTransactions = app.get(ListTransactionsUseCase);
     revertTransaction = app.get(RevertTransactionUseCase);
+    saveMetadata = app.get(SaveTransactionMetadataUseCase);
+    deleteMetadata = app.get(DeleteTransactionMetadataUseCase);
   });
 
   afterAll(async () => {
@@ -603,6 +610,413 @@ describe('TransactionsModule (real database)', () => {
       const page = await list(other.organizationId);
 
       expect(page.transactions).toEqual([]);
+    });
+  });
+
+  describe('metadata', () => {
+    const create = (
+      organizationId: string,
+      metadata?: Record<string, string>,
+      idempotencyKey?: string,
+    ) =>
+      createTransaction.execute({
+        organizationId,
+        ledgerName: 'main',
+        postings: [posting('world', 'users:1', 1000n)],
+        metadata,
+        idempotencyKey,
+      });
+
+    const save = (
+      organizationId: string,
+      transactionId: string,
+      metadata: Record<string, string>,
+    ) => saveMetadata.execute({ organizationId, ledgerName: 'main', transactionId, metadata });
+
+    const remove = (organizationId: string, transactionId: string, key: string) =>
+      deleteMetadata.execute({ organizationId, ledgerName: 'main', transactionId, key });
+
+    const read = (organizationId: string, transactionId: string) =>
+      getTransaction.execute({ organizationId, ledgerName: 'main', transactionId });
+
+    it('saves the metadata of a new transaction, and puts it in the journal entry and the event', async () => {
+      const { organizationId } = await setup();
+
+      const { transaction } = await create(organizationId, { orderId: '42', channel: 'web' });
+      const state = await readState(organizationId);
+
+      expect(state.transactions[0]!.metadata).toEqual({ orderId: '42', channel: 'web' });
+      expect(state.logs[1]!.payload).toMatchObject({ metadata: { orderId: '42', channel: 'web' } });
+      expect(state.events[1]!.payload).toMatchObject({
+        metadata: { orderId: '42', channel: 'web' },
+      });
+      expect((await read(organizationId, transaction.id)).metadata.entries).toEqual({
+        orderId: '42',
+        channel: 'web',
+      });
+    });
+
+    it('shows the metadata in the list', async () => {
+      const { organizationId } = await setup();
+      await create(organizationId, { orderId: '42' });
+
+      const page = await listTransactions.execute({
+        organizationId,
+        ledgerName: 'main',
+        pageSize: 10,
+      });
+
+      expect(page.transactions.map((t) => t.metadata.entries)).toEqual([{ orderId: '42' }]);
+    });
+
+    it('adds keys and replaces a key that is there, and keeps the others', async () => {
+      const { organizationId } = await setup();
+      const { transaction } = await create(organizationId, { a: '1', b: '2' });
+
+      await save(organizationId, transaction.id, { b: '3', c: '4' });
+
+      expect((await read(organizationId, transaction.id)).metadata.entries).toEqual({
+        a: '1',
+        b: '3',
+        c: '4',
+      });
+    });
+
+    it('writes a journal entry and an outbox event about the transaction, with only the keys that changed', async () => {
+      const { organizationId, ledgerId } = await setup();
+      const { transaction } = await create(organizationId, { a: '1' });
+
+      await save(organizationId, transaction.id, { a: '1', b: '2' });
+      const state = await readState(organizationId);
+
+      // ledger created, transaction created, metadata saved
+      expect(state.logs).toHaveLength(3);
+      expect(state.logs[2]).toMatchObject({
+        seq: '3',
+        type: 'TRANSACTION_METADATA_SAVED',
+        transaction_id: transaction.id,
+        payload: { transactionId: transaction.id, metadata: { b: '2' } },
+      });
+      expect(state.events).toHaveLength(3);
+      expect(state.events[2]).toMatchObject({
+        ledger_id: ledgerId,
+        aggregate_type: 'transaction',
+        aggregate_id: transaction.id,
+        event_type: 'ledger.transaction.metadata.saved',
+        published_at: null,
+        payload: {
+          transactionId: transaction.id,
+          ledgerId,
+          organizationId,
+          metadata: { b: '2' },
+        },
+      });
+    });
+
+    it('removes a key, and writes a journal entry and an outbox event', async () => {
+      const { organizationId } = await setup();
+      const { transaction } = await create(organizationId, { a: '1', b: '2' });
+
+      await remove(organizationId, transaction.id, 'a');
+      const state = await readState(organizationId);
+
+      expect((await read(organizationId, transaction.id)).metadata.entries).toEqual({ b: '2' });
+      expect(state.logs[2]).toMatchObject({
+        type: 'TRANSACTION_METADATA_DELETED',
+        transaction_id: transaction.id,
+        payload: { transactionId: transaction.id, key: 'a' },
+      });
+      expect(state.events[2]).toMatchObject({
+        aggregate_id: transaction.id,
+        event_type: 'ledger.transaction.metadata.deleted',
+        payload: { transactionId: transaction.id, key: 'a' },
+      });
+    });
+
+    it('saves, logs and publishes nothing when nothing changes', async () => {
+      const { organizationId } = await setup();
+      const { transaction } = await create(organizationId, { a: '1' });
+
+      await save(organizationId, transaction.id, { a: '1' });
+      await remove(organizationId, transaction.id, 'missing');
+      const state = await readState(organizationId);
+
+      expect(state.logs).toHaveLength(2);
+      expect(state.events).toHaveLength(2);
+      expect((await read(organizationId, transaction.id)).metadata.entries).toEqual({ a: '1' });
+    });
+
+    it('never changes the postings, the balances or the number of transactions', async () => {
+      const { organizationId } = await setup();
+      const { transaction } = await create(organizationId);
+      const before = await readState(organizationId);
+
+      await save(organizationId, transaction.id, { note: 'late' });
+      const after = await readState(organizationId);
+
+      expect(after.postings).toEqual(before.postings);
+      expect(after.balances).toEqual(before.balances);
+      expect(after.transactions).toHaveLength(1);
+      expect(after.transactions[0]).toMatchObject({
+        id: transaction.id,
+        posted_at: transaction.postedAt,
+        reverted_at: null,
+        metadata: { note: 'late' },
+      });
+    });
+
+    it('works on a reverted transaction, and keeps the revert mark', async () => {
+      const { organizationId } = await setup();
+      const { transaction } = await create(organizationId, { a: '1' });
+      const { transaction: reversal } = await revertTransaction.execute({
+        organizationId,
+        ledgerName: 'main',
+        transactionId: transaction.id,
+      });
+
+      await save(organizationId, transaction.id, { reason: 'customer asked' });
+      const read1 = await read(organizationId, transaction.id);
+
+      expect(read1.metadata.entries).toEqual({ a: '1', reason: 'customer asked' });
+      expect(read1.revertedByTransactionId).toBe(reversal.id);
+      expect(reversal.metadata.size).toBe(0); // a revert does not copy the metadata
+    });
+
+    it('can edit the metadata of a reversing transaction too', async () => {
+      const { organizationId } = await setup();
+      const { transaction } = await create(organizationId, { a: '1' });
+      const { transaction: reversal } = await revertTransaction.execute({
+        organizationId,
+        ledgerName: 'main',
+        transactionId: transaction.id,
+      });
+
+      await save(organizationId, reversal.id, { reason: 'duplicate' });
+
+      expect((await read(organizationId, reversal.id)).metadata.entries).toEqual({
+        reason: 'duplicate',
+      });
+    });
+
+    describe('idempotency', () => {
+      it('answers a replay with the metadata of the first call, even after an edit', async () => {
+        const { organizationId } = await setup();
+        const first = await create(organizationId, { orderId: '42' }, 'key-1');
+        await save(organizationId, first.transaction.id, { note: 'added later' });
+        await remove(organizationId, first.transaction.id, 'orderId');
+
+        const replay = await create(organizationId, { orderId: '42' }, 'key-1');
+
+        expect(replay.replayed).toBe(true);
+        expect(replay.transaction.metadata.entries).toEqual({ orderId: '42' });
+        // Reading it normally shows the edits.
+        expect((await read(organizationId, first.transaction.id)).metadata.entries).toEqual({
+          note: 'added later',
+        });
+      });
+
+      it('treats the same metadata in another key order as the same request', async () => {
+        const { organizationId } = await setup();
+        const first = await create(organizationId, { a: '1', b: '2' }, 'key-1');
+
+        const replay = await create(organizationId, { b: '2', a: '1' }, 'key-1');
+
+        expect(replay.replayed).toBe(true);
+        expect(replay.transaction.id).toBe(first.transaction.id);
+      });
+
+      it('refuses the same key with other metadata, and changes nothing', async () => {
+        const { organizationId } = await setup();
+        await create(organizationId, { orderId: '42' }, 'key-1');
+        const before = await readState(organizationId);
+
+        await expect(create(organizationId, { orderId: '43' }, 'key-1')).rejects.toBeInstanceOf(
+          IdempotencyKeyReusedError,
+        );
+        await expect(create(organizationId, undefined, 'key-1')).rejects.toBeInstanceOf(
+          IdempotencyKeyReusedError,
+        );
+
+        expect(await readState(organizationId)).toEqual(before);
+      });
+
+      it('treats no metadata and empty metadata as the same request', async () => {
+        const { organizationId } = await setup();
+        const first = await create(organizationId, undefined, 'key-1');
+
+        const replay = await create(organizationId, {}, 'key-1');
+
+        expect(replay.replayed).toBe(true);
+        expect(replay.transaction.id).toBe(first.transaction.id);
+      });
+
+      it('answers a revert replay with a transaction that has no metadata, even after an edit', async () => {
+        const { organizationId } = await setup();
+        const { transaction } = await create(organizationId);
+        const first = await revertTransaction.execute({
+          organizationId,
+          ledgerName: 'main',
+          transactionId: transaction.id,
+          idempotencyKey: 'revert-key',
+        });
+        await save(organizationId, first.transaction.id, { reason: 'added later' });
+
+        const replay = await revertTransaction.execute({
+          organizationId,
+          ledgerName: 'main',
+          transactionId: transaction.id,
+          idempotencyKey: 'revert-key',
+        });
+
+        expect(replay.replayed).toBe(true);
+        expect(replay.transaction.id).toBe(first.transaction.id);
+        expect(replay.transaction.metadata.size).toBe(0);
+      });
+    });
+
+    describe('limits', () => {
+      it('refuses a transaction with too much metadata, and saves nothing', async () => {
+        const { organizationId } = await setup();
+        const tooMany = Object.fromEntries(Array.from({ length: 129 }, (_, i) => [`k${i}`, 'v']));
+        const before = await readState(organizationId);
+
+        await expect(create(organizationId, tooMany)).rejects.toBeInstanceOf(
+          MetadataLimitExceededError,
+        );
+
+        expect(await readState(organizationId)).toEqual(before);
+      });
+
+      it('checks the stored metadata, so many small saves cannot pass the limit', async () => {
+        const { organizationId } = await setup();
+        const full = Object.fromEntries(Array.from({ length: 128 }, (_, i) => [`k${i}`, 'v']));
+        const { transaction } = await create(organizationId, full);
+        const before = await readState(organizationId);
+
+        await expect(save(organizationId, transaction.id, { oneMore: 'x' })).rejects.toBeInstanceOf(
+          MetadataLimitExceededError,
+        );
+
+        expect(await readState(organizationId)).toEqual(before);
+      });
+
+      it('lets a transaction with a full metadata get smaller, and then bigger again', async () => {
+        const { organizationId } = await setup();
+        const full = Object.fromEntries(Array.from({ length: 128 }, (_, i) => [`k${i}`, 'v']));
+        const { transaction } = await create(organizationId, full);
+
+        await remove(organizationId, transaction.id, 'k0');
+        await save(organizationId, transaction.id, { oneMore: 'x' });
+
+        expect((await read(organizationId, transaction.id)).metadata.size).toBe(128);
+      });
+    });
+
+    describe('not found', () => {
+      it('throws LedgerNotFoundError for a ledger that does not exist', async () => {
+        const { organizationId } = await setup();
+        const { transaction } = await create(organizationId);
+
+        await expect(
+          saveMetadata.execute({
+            organizationId,
+            ledgerName: 'nope',
+            transactionId: transaction.id,
+            metadata: { a: '1' },
+          }),
+        ).rejects.toBeInstanceOf(LedgerNotFoundError);
+        await expect(
+          deleteMetadata.execute({
+            organizationId,
+            ledgerName: 'nope',
+            transactionId: transaction.id,
+            key: 'a',
+          }),
+        ).rejects.toBeInstanceOf(LedgerNotFoundError);
+      });
+
+      it('throws TransactionNotFoundError for an id that does not exist', async () => {
+        const { organizationId } = await setup();
+        const missing = newOrganizationId();
+
+        await expect(save(organizationId, missing, { a: '1' })).rejects.toBeInstanceOf(
+          TransactionNotFoundError,
+        );
+        await expect(remove(organizationId, missing, 'a')).rejects.toBeInstanceOf(
+          TransactionNotFoundError,
+        );
+      });
+
+      it('does not edit a transaction of another ledger of the same organization', async () => {
+        const { organizationId } = await setup();
+        await createLedger.execute({ organizationId, name: 'other', metadata: {} });
+        const { transaction } = await create(organizationId, { a: '1' });
+
+        await expect(
+          saveMetadata.execute({
+            organizationId,
+            ledgerName: 'other',
+            transactionId: transaction.id,
+            metadata: { a: 'changed' },
+          }),
+        ).rejects.toBeInstanceOf(TransactionNotFoundError);
+
+        expect((await read(organizationId, transaction.id)).metadata.entries).toEqual({ a: '1' });
+      });
+
+      it('does not edit a transaction of another organization', async () => {
+        const { organizationId } = await setup();
+        const { organizationId: stranger } = await setup();
+        const { transaction } = await create(organizationId, { a: '1' });
+
+        await expect(save(stranger, transaction.id, { a: 'changed' })).rejects.toBeInstanceOf(
+          TransactionNotFoundError,
+        );
+        await expect(remove(stranger, transaction.id, 'a')).rejects.toBeInstanceOf(
+          TransactionNotFoundError,
+        );
+
+        expect((await read(organizationId, transaction.id)).metadata.entries).toEqual({ a: '1' });
+      });
+    });
+
+    describe('at the same time', () => {
+      it('keeps every key when many edits of different keys run together', async () => {
+        const { organizationId } = await setup();
+        const { transaction } = await create(organizationId);
+        const keys = Array.from({ length: 20 }, (_, i) => `k${i}`);
+
+        await Promise.all(keys.map((key) => save(organizationId, transaction.id, { [key]: 'v' })));
+        const state = await readState(organizationId);
+
+        expect(
+          Object.keys((await read(organizationId, transaction.id)).metadata.entries).sort(),
+        ).toEqual([...keys].sort());
+        // ledger created, transaction created, and one entry per edit, with no gap in seq
+        expect(state.logs.map((log) => log.seq)).toEqual(
+          Array.from({ length: 22 }, (_, i) => String(i + 1)),
+        );
+      });
+
+      it('does not deadlock with a revert of the same transaction', async () => {
+        const { organizationId } = await setup();
+        const { transaction } = await create(organizationId, { a: '1' });
+
+        await Promise.all([
+          ...Array.from({ length: 5 }, (_, i) =>
+            save(organizationId, transaction.id, { [`k${i}`]: 'v' }),
+          ),
+          revertTransaction.execute({
+            organizationId,
+            ledgerName: 'main',
+            transactionId: transaction.id,
+          }),
+        ]);
+
+        const final = await read(organizationId, transaction.id);
+        expect(final.isReverted).toBe(true);
+        expect(final.metadata.size).toBe(6);
+      });
     });
   });
 

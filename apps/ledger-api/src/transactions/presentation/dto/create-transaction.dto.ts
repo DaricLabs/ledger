@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ASSET_CODE_PATTERN } from '@ledger/domain';
+import { metadataSchema } from '../../../core/validation/metadata.dto.js';
 import { accountAddressSchema } from '../../../accounts/presentation/dto/account-address.dto.js';
 import {
   TRANSACTION_MAX_POSTINGS,
@@ -41,6 +42,9 @@ const postingSchema = z.strictObject({
  * detail per bad field. The rules that need domain knowledge (a posting needs
  * two different accounts) stay in the domain and come back as domain errors.
  *
+ * The size limits of the metadata are not checked here: they are the rules of
+ * `Metadata` in `@ledger/domain`.
+ *
  * Unknown fields are rejected on purpose. A typo like `refrence` would
  * otherwise be dropped without a word, and the client would think its
  * protection against repeats was on.
@@ -48,6 +52,7 @@ const postingSchema = z.strictObject({
 export const createTransactionSchema = z.strictObject({
   postings: z.array(postingSchema).min(1).max(TRANSACTION_MAX_POSTINGS),
   reference: z.string().min(1).max(TRANSACTION_REFERENCE_MAX_LENGTH).optional(),
+  metadata: metadataSchema.default({}),
 });
 
 export type CreateTransactionDto = z.infer<typeof createTransactionSchema>;

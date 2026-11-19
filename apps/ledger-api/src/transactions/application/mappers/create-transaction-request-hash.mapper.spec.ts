@@ -31,6 +31,14 @@ describe('toCreateTransactionRequestHash', () => {
     );
   });
 
+  it('keeps its format with metadata, with the keys sorted', () => {
+    const withMetadata = { ...request, metadata: { orderId: '42', channel: 'web' } };
+
+    expect(toCreateTransactionRequestHash(withMetadata).toString('hex')).toBe(
+      '69f2266fc37880eb47990051e1c5ba27c03935308d63ce297b592bed201828eb',
+    );
+  });
+
   it.each([
     ['another reference', { ...request, reference: 'order-2' }],
     ['no reference', { postings: request.postings }],
@@ -75,5 +83,34 @@ describe('toCreateTransactionRequestHash', () => {
     expect(toCreateTransactionRequestHash(none).equals(toCreateTransactionRequestHash(empty))).toBe(
       false,
     );
+  });
+
+  describe('metadata', () => {
+    const hashOf = (metadata?: Record<string, string>) =>
+      toCreateTransactionRequestHash({ ...request, metadata });
+
+    it('gives the same hash whatever the order of the keys', () => {
+      const one = hashOf({ orderId: '42', channel: 'web', a: '1' });
+      const other = hashOf({ a: '1', channel: 'web', orderId: '42' });
+
+      expect(one.equals(other)).toBe(true);
+    });
+
+    it('gives the same hash for no metadata and for empty metadata', () => {
+      expect(hashOf(undefined).equals(hashOf({}))).toBe(true);
+    });
+
+    it.each([
+      ['an added key', { orderId: '42' }, { orderId: '42', channel: 'web' }],
+      ['another value', { orderId: '42' }, { orderId: '43' }],
+      ['another key', { orderId: '42' }, { order: '42' }],
+      ['metadata against none', {}, { orderId: '42' }],
+    ])('gives another hash for %s', (_name, one, other) => {
+      expect(hashOf(one).equals(hashOf(other))).toBe(false);
+    });
+
+    it('does not let a key and a value move into each other', () => {
+      expect(hashOf({ ab: 'c' }).equals(hashOf({ a: 'bc' }))).toBe(false);
+    });
   });
 });

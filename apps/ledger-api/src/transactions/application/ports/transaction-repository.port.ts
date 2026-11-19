@@ -54,8 +54,13 @@ export interface ITransactionRepository {
 
   /**
    * Like `findById`, and the transaction row is locked until the transaction
-   * ends, so no other transaction can revert it in the meantime. A caller that
-   * waits for the lock sees the result of the transaction that held it.
+   * ends, so no other transaction can revert it or edit its metadata in the
+   * meantime. A caller that waits for the lock sees the result of the
+   * transaction that held it.
+   *
+   * It is a lock for changing columns that are not keys (`metadata`,
+   * `reverted_at`), so it does not block the rows that point to this
+   * transaction (the journal, for example).
    *
    * Lock a transaction before its balances, never after: every writer takes
    * its locks in that order, so two writers never wait for each other.
@@ -80,6 +85,17 @@ export interface ITransactionRepository {
     id: string,
     reversal: Transaction,
   ): Promise<void>;
+
+  /**
+   * Saves the metadata of a transaction that was loaded with `lockById` in
+   * this transaction. Metadata is the only part of a saved transaction that
+   * this method changes: the postings never change.
+   *
+   * @throws Error If no transaction row was updated. The caller locked the
+   * transaction in the same database transaction, so this means a bug and not
+   * a user mistake.
+   */
+  updateMetadata(trx: TenantTransaction, transaction: Transaction): Promise<void>;
 
   /**
    * Loads one page of the transactions of a ledger, newest first: by
