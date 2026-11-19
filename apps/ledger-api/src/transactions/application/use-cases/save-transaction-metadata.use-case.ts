@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type { MetadataEntries } from '@ledger/domain';
+import { Metadata, type MetadataEntries } from '@ledger/domain';
 import {
   LEDGER_LOG_WRITER,
   type ILedgerLogWriter,
@@ -60,10 +60,12 @@ export interface ISaveTransactionMetadataInput {
  *
  * @throws LedgerNotFoundError If the organization has no ledger with this name.
  * @throws TransactionNotFoundError If the ledger has no transaction with this id.
- * @throws InvalidMetadataError If the metadata breaks the domain rules.
- * @throws MetadataLimitExceededError If the transaction would have too many
- * keys, or a key, a value or the total would be too big. The size is checked
- * on the locked, stored metadata, so many small saves cannot pass the limits.
+ * @throws InvalidMetadataError If the metadata breaks the domain rules. This
+ * is checked first, before the ledger is looked up.
+ * @throws MetadataLimitExceededError If a key or a value is too big, or the
+ * transaction would have too many keys or be too big in total. The total is
+ * checked on the locked, stored metadata, so many small saves cannot pass the
+ * limits.
  * The presentation layer turns these errors into HTTP responses.
  */
 @Injectable()
@@ -77,29 +79,33 @@ export class SaveTransactionMetadataUseCase {
   ) {}
 
   async execute(input: ISaveTransactionMetadataInput): Promise<void> {
-    await this.transactions.run(input.organizationId, async (trx) => {
-      const ledger = await this.ledgers.findByName(trx, input.ledgerName);
+    // Read the input once, before any await. The caller could change its
+    // object while we wait for the database, and then the saved metadata, the
+    // journal entry and the event would not agree. `Metadata.of` copies and
+    // checks the entries, so this also refuses bad metadata before we open a
+    // database transaction.
+    const { organizationId, ledgerName, transactionId } = input;
+    const changes = Metadata.of(input.metadata).entries;
+
+    await this.transactions.run(organizationId, async (trx) => {
+      const ledger = await this.ledgers.findByName(trx, ledgerName);
       if (ledger === null) {
-        throw new LedgerNotFoundError(input.ledgerName);
+        throw new LedgerNotFoundError(ledgerName);
       }
 
       // The lock is held until the transaction ends. Without it, two edits at
       // the same time could both read the old metadata, and one would be lost.
-      const transaction = await this.transactionRepository.lockById(
-        trx,
-        ledger.id,
-        input.transactionId,
-      );
+      const transaction = await this.transactionRepository.lockById(trx, ledger.id, transactionId);
       if (transaction === null) {
-        throw new TransactionNotFoundError(input.transactionId);
+        throw new TransactionNotFoundError(transactionId);
       }
 
-      const updated = transaction.withMetadata(input.metadata);
+      const updated = transaction.withMetadata(changes);
       if (updated === transaction) {
         return;
       }
 
-      const changed = changedEntries(transaction.metadata.entries, input.metadata);
+      const changed = changedEntries(transaction.metadata.entries, changes);
       await this.transactionRepository.updateMetadata(trx, updated);
       await this.logs.append(trx, {
         ledgerId: ledger.id,

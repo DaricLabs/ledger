@@ -232,6 +232,28 @@ describe('SaveTransactionMetadataUseCase', () => {
     expect(saved?.metadata.entries).toEqual({ note: 'new', channel: 'web' });
   });
 
+  it('saves, logs and publishes the same metadata, even if the caller changes its object while we wait', async () => {
+    const { useCase, transactionRepository, logs, outbox } = setup();
+    const metadata: Record<string, string> = { note: 'new' };
+    transactionRepository.lockById.mockImplementationOnce(async () => {
+      metadata['note'] = 'changed';
+      metadata['extra'] = 'added';
+      return stored({ orderId: '42', note: 'old' });
+    });
+
+    await useCase.execute({ ...input, metadata });
+
+    expect(transactionRepository.updateMetadata.mock.calls[0]?.[1].metadata.entries).toEqual({
+      orderId: '42',
+      note: 'new',
+    });
+    expect(logs.append.mock.calls[0]?.[1].payload).toEqual({
+      transactionId: TRANSACTION_ID,
+      metadata: { note: 'new' },
+    });
+    expect(outbox.append.mock.calls[0]?.[1].payload).toMatchObject({ metadata: { note: 'new' } });
+  });
+
   describe('when something is wrong', () => {
     it('throws LedgerNotFoundError and goes no further when the ledger is missing', async () => {
       const { useCase, ledgers, transactionRepository, logs, outbox } = setup();
@@ -255,13 +277,14 @@ describe('SaveTransactionMetadataUseCase', () => {
       expect(calls).not.toContain('commit');
     });
 
-    it('lets the domain refuse an empty key, and writes nothing', async () => {
-      const { useCase, transactionRepository, logs, outbox } = setup();
+    it('lets the domain refuse an empty key before it opens a transaction, and writes nothing', async () => {
+      const { useCase, transactions, transactionRepository, logs, outbox } = setup();
 
       await expect(useCase.execute({ ...input, metadata: { '': 'x' } })).rejects.toBeInstanceOf(
         InvalidMetadataError,
       );
 
+      expect(transactions.run).not.toHaveBeenCalled();
       expect(transactionRepository.updateMetadata).not.toHaveBeenCalled();
       expect(logs.append).not.toHaveBeenCalled();
       expect(outbox.append).not.toHaveBeenCalled();

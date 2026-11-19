@@ -15,10 +15,14 @@ export interface ICreateTransactionRequestFingerprint {
 }
 
 /**
- * Bump this when the text below changes. A new format gives new hashes, so a
- * key that is still remembered would look like a different request.
+ * Bump this when the text below changes for requests that already existed. A
+ * new format gives new hashes, so a key that is still remembered would look
+ * like a different request, and an identical retry would fail with a 422 while
+ * the first call had already posted. Adding a new optional part to the text
+ * (like the metadata) needs no bump, as long as a request without that part
+ * keeps its old text.
  */
-const FORMAT_VERSION = 2;
+const FORMAT_VERSION = 1;
 
 /**
  * The SHA-256 of a create-transaction request. The idempotency module compares
@@ -38,6 +42,12 @@ const FORMAT_VERSION = 2;
  * as `{}`. The keys are sorted by their UTF-16 code units, which does not
  * depend on the language of the server.
  *
+ * The metadata is added at the end of the text only when there is some. So the
+ * text, and the hash, of a request without metadata is the same as before
+ * metadata existed, and a key that was saved by an older version still
+ * matches an identical retry. A request with metadata could not have existed
+ * before (it was refused), so no older key can clash with it.
+ *
  * The text is a JSON array, so no value can be moved into the next one (the
  * postings `a -> bc` and `ab -> c` have different texts).
  *
@@ -46,6 +56,7 @@ const FORMAT_VERSION = 2;
 export function toCreateTransactionRequestHash(
   request: ICreateTransactionRequestFingerprint,
 ): Buffer {
+  const metadata = sortedEntries(request.metadata ?? {});
   const text = JSON.stringify([
     FORMAT_VERSION,
     request.reference ?? null,
@@ -55,7 +66,7 @@ export function toCreateTransactionRequestHash(
       posting.asset,
       posting.amount.toString(),
     ]),
-    sortedEntries(request.metadata ?? {}),
+    ...(metadata.length === 0 ? [] : [metadata]),
   ]);
   return createHash('sha256').update(text).digest();
 }

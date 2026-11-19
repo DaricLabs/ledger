@@ -60,23 +60,24 @@ export class DeleteTransactionMetadataUseCase {
   ) {}
 
   async execute(input: IDeleteTransactionMetadataInput): Promise<void> {
-    await this.transactions.run(input.organizationId, async (trx) => {
-      const ledger = await this.ledgers.findByName(trx, input.ledgerName);
+    // Read the input once, before any await. The caller could change its
+    // object while we wait for the database, and then the removed key, the
+    // journal entry and the event would not agree.
+    const { organizationId, ledgerName, transactionId, key } = input;
+
+    await this.transactions.run(organizationId, async (trx) => {
+      const ledger = await this.ledgers.findByName(trx, ledgerName);
       if (ledger === null) {
-        throw new LedgerNotFoundError(input.ledgerName);
+        throw new LedgerNotFoundError(ledgerName);
       }
 
       // The lock is held until the transaction ends (see SaveTransactionMetadataUseCase).
-      const transaction = await this.transactionRepository.lockById(
-        trx,
-        ledger.id,
-        input.transactionId,
-      );
+      const transaction = await this.transactionRepository.lockById(trx, ledger.id, transactionId);
       if (transaction === null) {
-        throw new TransactionNotFoundError(input.transactionId);
+        throw new TransactionNotFoundError(transactionId);
       }
 
-      const updated = transaction.withoutMetadataKey(input.key);
+      const updated = transaction.withoutMetadataKey(key);
       if (updated === transaction) {
         return;
       }
@@ -86,7 +87,7 @@ export class DeleteTransactionMetadataUseCase {
         ledgerId: ledger.id,
         type: TRANSACTION_LOG_TYPE.METADATA_DELETED,
         transactionId: transaction.id,
-        payload: { transactionId: transaction.id, key: input.key },
+        payload: { transactionId: transaction.id, key },
       });
       await this.outbox.append(trx, {
         ledgerId: ledger.id,
@@ -97,7 +98,7 @@ export class DeleteTransactionMetadataUseCase {
           transactionId: transaction.id,
           ledgerId: ledger.id,
           organizationId: transaction.organizationId,
-          key: input.key,
+          key,
         },
       });
     });

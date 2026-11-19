@@ -199,6 +199,28 @@ describe('DeleteTransactionMetadataUseCase', () => {
     expect(calls).toEqual(['begin', 'find ledger', 'lock transaction', 'commit']);
   });
 
+  it('removes, logs and publishes the same key, even if the caller changes its object while we wait', async () => {
+    const { useCase, transactionRepository, logs, outbox } = setup();
+    const changing = { ...input };
+    transactionRepository.updateMetadata.mockImplementationOnce(async () => {
+      changing.key = 'orderId';
+    });
+    logs.append.mockImplementationOnce(async () => {
+      changing.key = 'other';
+    });
+
+    await useCase.execute(changing);
+
+    expect(transactionRepository.updateMetadata.mock.calls[0]?.[1].metadata.entries).toEqual({
+      orderId: '42',
+    });
+    expect(logs.append.mock.calls[0]?.[1].payload).toEqual({
+      transactionId: TRANSACTION_ID,
+      key: 'note',
+    });
+    expect(outbox.append.mock.calls[0]?.[1].payload).toMatchObject({ key: 'note' });
+  });
+
   describe('when something is wrong', () => {
     it('throws LedgerNotFoundError and goes no further when the ledger is missing', async () => {
       const { useCase, ledgers, transactionRepository, logs, outbox } = setup();

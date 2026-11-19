@@ -27,7 +27,7 @@ describe('toCreateTransactionRequestHash', () => {
 
   it('keeps its format: a change here would make remembered keys look like other requests', () => {
     expect(toCreateTransactionRequestHash(request).toString('hex')).toBe(
-      'dabac2d3d6f9b52c5fc5cfc0428e0a6ea21e6f4bf2e218c631d086ef7fc7d8ee',
+      '2ffecbc37f86f017b549eb649904dc24f203a455b2d41449145d591f3413f7e3',
     );
   });
 
@@ -35,7 +35,7 @@ describe('toCreateTransactionRequestHash', () => {
     const withMetadata = { ...request, metadata: { orderId: '42', channel: 'web' } };
 
     expect(toCreateTransactionRequestHash(withMetadata).toString('hex')).toBe(
-      '41122282200edcb58fa17fc35c001d725c1fa9f36f779bcb1d475f7d5bcd64f9',
+      '69f2266fc37880eb47990051e1c5ba27c03935308d63ce297b592bed201828eb',
     );
   });
 
