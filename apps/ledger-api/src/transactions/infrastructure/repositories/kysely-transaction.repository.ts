@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { AccountAddress, AssetCode, Money } from '@ledger/domain';
+import { AccountAddress, AssetCode, Metadata, Money, type MetadataEntries } from '@ledger/domain';
 import { isUniqueViolation, sql, unwrapTenantTransaction } from '@ledger/database/storage';
 import type { TenantTransaction } from '@ledger/database';
 import type {
@@ -20,6 +20,7 @@ const TRANSACTION_COLUMNS = [
   'organization_id',
   'ledger_id',
   'reference',
+  'metadata',
   'posted_at',
   'created_at',
   'reverted_at',
@@ -35,6 +36,7 @@ interface ITransactionRow {
   organization_id: string;
   ledger_id: string;
   reference: string | null;
+  metadata: unknown;
   posted_at: Date;
   created_at: Date;
   reverted_at: Date | null;
@@ -64,6 +66,7 @@ export class KyselyTransactionRepository implements ITransactionRepository {
           organization_id: sql<string>`current_organization_id()`,
           ledger_id: transaction.ledgerId,
           reference: transaction.reference,
+          metadata: transaction.metadata.entries,
           posted_at: transaction.postedAt,
           created_at: transaction.createdAt,
         })
@@ -129,6 +132,24 @@ export class KyselyTransactionRepository implements ITransactionRepository {
       .executeTakeFirst();
     if (result.numUpdatedRows !== 1n) {
       throw new Error(`Transaction ${id} was not found or was already reverted`);
+    }
+  }
+
+  async updateMetadata(trx: TenantTransaction, transaction: Transaction): Promise<void> {
+    // Only `metadata` is written: with the revert fields, it is the only column
+    // of a saved transaction that the runtime role may update.
+    const result = await unwrapTenantTransaction(trx)
+      .updateTable('transactions')
+      .set({ metadata: transaction.metadata.entries })
+      .where('ledger_id', '=', transaction.ledgerId)
+      .where('id', '=', transaction.id)
+      .executeTakeFirstOrThrow();
+
+    // Row-level security hides the rows of other organizations, so an update
+    // for one of them would change 0 rows without an error. Do not let that
+    // pass quietly.
+    if (result.numUpdatedRows !== 1n) {
+      throw new Error(`Expected to update 1 transaction row, but updated ${result.numUpdatedRows}`);
     }
   }
 
@@ -215,7 +236,10 @@ export class KyselyTransactionRepository implements ITransactionRepository {
       .select(TRANSACTION_COLUMNS)
       .where('ledger_id', '=', ledgerId)
       .where('id', '=', id);
-    const row = await (lock ? select.forUpdate() : select).executeTakeFirst();
+    // `for no key update` is enough: the columns we change later are not keys.
+    // It still waits for another writer of the same row, and it does not block
+    // the rows that point to it (a journal entry, for example).
+    const row = await (lock ? select.forNoKeyUpdate() : select).executeTakeFirst();
     if (row === undefined) {
       return null;
     }
@@ -241,6 +265,9 @@ function toTransaction(row: ITransactionRow, postings: readonly IPostingRow[]): 
     organizationId: row.organization_id,
     ledgerId: row.ledger_id,
     reference: row.reference,
+    // Safe cast: every transaction is saved from a `Metadata`, which allows
+    // string values only. The database itself only checks "a JSON object".
+    metadata: Metadata.reconstitute(row.metadata as MetadataEntries),
     postings: postings.map((posting) =>
       Posting.of(
         AccountAddress.of(posting.source_account),

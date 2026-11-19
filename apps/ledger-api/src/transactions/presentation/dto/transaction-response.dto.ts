@@ -1,3 +1,4 @@
+import type { MetadataEntries } from '@ledger/domain';
 import type { ITransactionPage } from '../../application/ports/transaction-repository.port.js';
 import type { Posting } from '../../domain/value-objects/posting.vo.js';
 import type { Transaction } from '../../domain/entities/transaction.entity.js';
@@ -22,6 +23,8 @@ export interface ITransactionResponse {
   /** The id the caller gave to the transaction, or `null`. */
   reference: string | null;
   postings: IPostingResponse[];
+  /** The key/value pairs of the caller. An empty object when there are none. */
+  metadata: MetadataEntries;
   /** When the transaction happened. ISO 8601 date in UTC, like `2026-11-07T10:00:00.000Z`. */
   postedAt: string;
   /** When the ledger saved it. ISO 8601 date in UTC. */
@@ -46,6 +49,7 @@ export function toTransactionResponseDto(transaction: Transaction): ITransaction
     id: transaction.id,
     reference: transaction.reference,
     postings: transaction.postings.map(toPostingResponseDto),
+    metadata: transaction.metadata.entries,
     postedAt: transaction.postedAt.toISOString(),
     createdAt: transaction.createdAt.toISOString(),
     revertedAt: transaction.revertedAt?.toISOString() ?? null,

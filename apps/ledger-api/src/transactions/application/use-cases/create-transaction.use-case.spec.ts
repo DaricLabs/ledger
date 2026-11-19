@@ -3,7 +3,9 @@ import {
   AccountAddress,
   AssetCode,
   InvalidAccountAddressError,
+  InvalidMetadataError,
   Metadata,
+  MetadataLimitExceededError,
   Money,
 } from '@ledger/domain';
 import { IdempotencyKeyReusedError } from '../../../idempotency/domain/errors/idempotency-key-reused.error.js';
@@ -104,6 +106,7 @@ function setup(held: Held = {}) {
     findById: vi.fn<ITransactionRepository['findById']>(),
     lockById: vi.fn<ITransactionRepository['lockById']>(),
     markReverted: vi.fn<ITransactionRepository['markReverted']>(),
+    updateMetadata: vi.fn<ITransactionRepository['updateMetadata']>(),
     findPage: vi.fn<ITransactionRepository['findPage']>(),
   };
   const logs = {
@@ -279,6 +282,7 @@ describe('CreateTransactionUseCase', () => {
       transactionId: TRANSACTION_ID,
       payload: {
         reference: 'order-1',
+        metadata: {},
         postedAt: transaction.postedAt.toISOString(),
         postings: [
           { source: 'world', destination: 'users:1', asset: 'USD', amount: '1000' },
@@ -303,6 +307,7 @@ describe('CreateTransactionUseCase', () => {
         ledgerId: LEDGER_ID,
         organizationId: ORG_ID,
         reference: 'order-1',
+        metadata: {},
         postedAt: transaction.postedAt.toISOString(),
         createdAt: transaction.createdAt.toISOString(),
         postings: [
@@ -322,6 +327,69 @@ describe('CreateTransactionUseCase', () => {
 
     expect(result.replayed).toBe(false);
     expect(idempotencyKeys.claim).not.toHaveBeenCalled();
+  });
+
+  describe('metadata', () => {
+    const withMetadata = { ...input, metadata: { orderId: '42', channel: 'web' } };
+
+    it('saves the metadata with the transaction', async () => {
+      const { useCase, transactionRepository } = setup();
+
+      const { transaction } = await useCase.execute(withMetadata);
+
+      expect(transaction.metadata.entries).toEqual({ orderId: '42', channel: 'web' });
+      expect(transactionRepository.insert.mock.calls[0]?.[1].metadata.entries).toEqual({
+        orderId: '42',
+        channel: 'web',
+      });
+    });
+
+    it('uses no metadata when none is given', async () => {
+      const { useCase } = setup();
+
+      const { transaction } = await useCase.execute(input);
+
+      expect(transaction.metadata.size).toBe(0);
+    });
+
+    it('puts the metadata in the journal entry and in the outbox event', async () => {
+      const { useCase, logs, outbox } = setup();
+
+      await useCase.execute(withMetadata);
+
+      expect(logs.append.mock.calls[0]?.[1].payload).toMatchObject({
+        metadata: { orderId: '42', channel: 'web' },
+      });
+      expect(outbox.append.mock.calls[0]?.[1].payload).toMatchObject({
+        metadata: { orderId: '42', channel: 'web' },
+      });
+    });
+
+    it('is not changed by changes the caller makes to its object while we wait for the database', async () => {
+      const { useCase, balances } = setup();
+      const entries: Record<string, string> = { orderId: '42' };
+      balances.open.mockImplementationOnce(async () => {
+        entries['orderId'] = 'changed';
+      });
+
+      const { transaction } = await useCase.execute({ ...input, metadata: entries });
+
+      expect(transaction.metadata.entries).toEqual({ orderId: '42' });
+    });
+
+    it('checks the metadata before it opens a transaction', async () => {
+      const { useCase, transactions, ledgers } = setup();
+
+      await expect(useCase.execute({ ...input, metadata: { '': 'x' } })).rejects.toBeInstanceOf(
+        InvalidMetadataError,
+      );
+      await expect(
+        useCase.execute({ ...input, metadata: { k: 'x'.repeat(16 * 1024 + 1) } }),
+      ).rejects.toBeInstanceOf(MetadataLimitExceededError);
+
+      expect(transactions.run).not.toHaveBeenCalled();
+      expect(ledgers.findByName).not.toHaveBeenCalled();
+    });
   });
 
   describe('with an idempotency key', () => {
@@ -376,6 +444,7 @@ describe('CreateTransactionUseCase', () => {
             Money.of(AssetCode.of('USD'), 5n),
           ),
         ],
+        metadata: Metadata.empty(),
         postedAt: new Date('2026-11-16T10:00:00.000Z'),
         createdAt: new Date('2026-11-16T10:00:00.000Z'),
       });
@@ -412,6 +481,7 @@ describe('CreateTransactionUseCase', () => {
             Money.of(AssetCode.of('USD'), 5n),
           ),
         ],
+        metadata: Metadata.empty(),
         postedAt: new Date('2026-11-16T10:00:00.000Z'),
         createdAt: new Date('2026-11-16T10:00:00.000Z'),
         revertedAt: new Date('2026-11-16T11:00:00.000Z'),
@@ -426,6 +496,55 @@ describe('CreateTransactionUseCase', () => {
       expect(transaction.id).toBe(reverted.id);
       expect(transaction.isReverted).toBe(false);
       expect(transaction.revertedAt).toBeNull();
+    });
+
+    it('puts the metadata in the request hash, so the same key with other metadata is another request', async () => {
+      const { useCase, idempotencyKeys } = setup();
+
+      await useCase.execute({ ...keyed, metadata: { orderId: '42' } });
+      await useCase.execute(keyed);
+
+      const [withMetadata, without] = idempotencyKeys.claim.mock.calls.map(
+        (call) => call[2].requestHash,
+      );
+      expect(withMetadata).toEqual(
+        toCreateTransactionRequestHash({ ...input, metadata: { orderId: '42' } }),
+      );
+      expect(without).toEqual(toCreateTransactionRequestHash(input));
+      expect(withMetadata).not.toEqual(without);
+    });
+
+    it('answers a replay with the metadata of the request, even if it was edited since', async () => {
+      const { useCase, idempotencyKeys, transactionRepository } = setup();
+      const edited = Transaction.reconstitute({
+        id: '0190a5d4-7b3c-7abc-8def-0123456789b4',
+        organizationId: ORG_ID,
+        ledgerId: LEDGER_ID,
+        reference: 'order-1',
+        postings: [
+          Posting.of(
+            AccountAddress.of('world'),
+            AccountAddress.of('users:1'),
+            Money.of(AssetCode.of('USD'), 5n),
+          ),
+        ],
+        metadata: Metadata.of({ orderId: '42', note: 'added after the first call' }),
+        postedAt: new Date('2026-11-16T10:00:00.000Z'),
+        createdAt: new Date('2026-11-16T10:00:00.000Z'),
+        revertedAt: null,
+        revertedByTransactionId: null,
+      });
+      idempotencyKeys.claim.mockResolvedValueOnce({ replayed: true, transactionId: edited.id });
+      transactionRepository.findById.mockResolvedValueOnce(edited);
+
+      const { transaction, replayed } = await useCase.execute({
+        ...keyed,
+        metadata: { orderId: '42' },
+      });
+
+      expect(replayed).toBe(true);
+      expect(transaction.id).toBe(edited.id);
+      expect(transaction.metadata.entries).toEqual({ orderId: '42' });
     });
 
     it('passes IdempotencyKeyReusedError through and writes nothing', async () => {

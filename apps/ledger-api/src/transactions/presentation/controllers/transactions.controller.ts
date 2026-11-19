@@ -1,7 +1,10 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   Post,
   Query,
@@ -13,15 +16,22 @@ import type { Response } from 'express';
 import { AccountExceptionFilter } from '../../../accounts/presentation/filters/account-exception.filter.js';
 import { OrganizationId } from '../../../core/tenant/organization-id.decorator.js';
 import { TenantGuard } from '../../../core/tenant/tenant.guard.js';
+import {
+  metadataKeySchema,
+  saveMetadataSchema,
+  type SaveMetadataDto,
+} from '../../../core/validation/metadata.dto.js';
 import { IDEMPOTENT_REPLAYED_HEADER } from '../../../idempotency/presentation/constants/idempotency-header.constant.js';
 import { IdempotencyKey } from '../../../idempotency/presentation/decorators/idempotency-key.decorator.js';
 import { IdempotencyExceptionFilter } from '../../../idempotency/presentation/filters/idempotency-exception.filter.js';
 import { LedgerExceptionFilter } from '../../../ledgers/presentation/filters/ledger-exception.filter.js';
 import { ledgerNameSchema } from '../../../ledgers/presentation/dto/ledger-name.dto.js';
 import { CreateTransactionUseCase } from '../../application/use-cases/create-transaction.use-case.js';
+import { DeleteTransactionMetadataUseCase } from '../../application/use-cases/delete-transaction-metadata.use-case.js';
 import { GetTransactionUseCase } from '../../application/use-cases/get-transaction.use-case.js';
 import { ListTransactionsUseCase } from '../../application/use-cases/list-transactions.use-case.js';
 import { RevertTransactionUseCase } from '../../application/use-cases/revert-transaction.use-case.js';
+import { SaveTransactionMetadataUseCase } from '../../application/use-cases/save-transaction-metadata.use-case.js';
 import {
   createTransactionSchema,
   type CreateTransactionDto,
@@ -42,6 +52,7 @@ import { TransactionExceptionFilter } from '../filters/transaction-exception.fil
 const LEDGERS_PATH = 'ledgers';
 const TRANSACTIONS_PATH = 'transactions';
 const REVERT_PATH = 'revert';
+const METADATA_PATH = 'metadata';
 
 /**
  * HTTP entry of the transactions feature. It only reads the request, calls a
@@ -70,6 +81,8 @@ export class TransactionsController {
     private readonly getTransaction: GetTransactionUseCase,
     private readonly listTransactions: ListTransactionsUseCase,
     private readonly revertTransaction: RevertTransactionUseCase,
+    private readonly saveTransactionMetadata: SaveTransactionMetadataUseCase,
+    private readonly deleteTransactionMetadata: DeleteTransactionMetadataUseCase,
   ) {}
 
   /**
@@ -85,21 +98,28 @@ export class TransactionsController {
    * A transaction that takes money out of an account before the money comes in
    * fails, even if the account would end above zero.
    *
+   * `metadata` is an optional object of strings, like `{ "orderId": "42" }`,
+   * saved with the transaction. Use ids, not personal data: the journal keeps
+   * what is written. It can be edited later (see `saveMetadata`).
+   *
    * **Safe to repeat.** Send an `Idempotency-Key` header (1 to 255 printable
    * ASCII characters) and the transaction is created once, however many times
    * the same request is sent. A repeat answers like the first call: `201`,
    * the same body and the same `Location`, plus the header
-   * `Idempotent-Replayed: true`. A key is remembered for 24 hours, for one
-   * ledger. A request that failed leaves no key, so it can be sent again with
+   * `Idempotent-Replayed: true`. The metadata is part of the request, and a
+   * repeat answers with the metadata of the first call, even if it was edited
+   * since. A key is remembered for 24 hours, for one ledger. A request that failed leaves no key, so it can be sent again with
    * the same key. Without the header, every request creates a transaction.
    *
    * - `201`: the transaction was created (or, with `Idempotent-Replayed: true`,
    *   it was created by an earlier call with the same key). The `Location`
    *   header is its URL.
    * - `400`: `VALIDATION` (bad shape: a missing field, an unknown field, a bad
-   *   address, asset code or amount, no postings or more than 100, or a bad
-   *   `Idempotency-Key`), `INVALID_POSTING` (a posting has the same source and
-   *   destination) or `INVALID_TRANSACTION`.
+   *   address, asset code or amount, no postings or more than 100, bad
+   *   metadata, or a bad `Idempotency-Key`), `INVALID_POSTING` (a posting has
+   *   the same source and destination), `INVALID_TRANSACTION`, or
+   *   `METADATA_LIMIT_EXCEEDED` (a key, a value or the metadata is too big, or
+   *   it has too many keys).
    * - `404`: `LEDGER_NOT_FOUND` (no such ledger in this organization).
    * - `409`: `TRANSACTION_REFERENCE_ALREADY_EXISTS` (the ledger already has a
    *   transaction with this reference).
@@ -119,6 +139,7 @@ export class TransactionsController {
       ledgerName,
       reference: body.reference,
       postings: body.postings,
+      metadata: body.metadata,
       idempotencyKey,
     });
     // The ledger name passed the name pattern, and the id is made by the ledger,
@@ -237,5 +258,67 @@ export class TransactionsController {
       response.setHeader(IDEMPOTENT_REPLAYED_HEADER, 'true');
     }
     return toTransactionResponseDto(transaction);
+  }
+
+  /**
+   * Adds metadata entries to a transaction of a ledger of the organization of
+   * the `X-Organization-Id` header. The body is a plain object, like
+   * `{ "orderId": "42" }`. A key that is already there gets the new value, and
+   * the other keys stay as they are. The postings never change. It also works
+   * on a reverted transaction.
+   *
+   * It is safe to repeat: the same body gives the same result. Every real
+   * change leaves an entry in the journal, and a repeat that changes nothing
+   * leaves none.
+   *
+   * - `204`: the metadata is saved (or was already like this).
+   * - `400`: `VALIDATION` (the ledger name or the id has a wrong shape, the
+   *   body is not an object of strings, a key is empty, or there is no key at
+   *   all) or `METADATA_LIMIT_EXCEEDED` (the transaction would have too many
+   *   keys, or a key, a value or the total would be too big).
+   * - `404`: `LEDGER_NOT_FOUND` (no such ledger in this organization) or
+   *   `TRANSACTION_NOT_FOUND` (no such transaction in this ledger).
+   */
+  @Post(`:transactionId/${METADATA_PATH}`)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async saveMetadata(
+    @OrganizationId() organizationId: string,
+    @Param('ledgerName', { schema: ledgerNameSchema }) ledgerName: string,
+    @Param('transactionId', { schema: transactionIdSchema }) transactionId: string,
+    @Body({ schema: saveMetadataSchema }) metadata: SaveMetadataDto,
+  ): Promise<void> {
+    await this.saveTransactionMetadata.execute({
+      organizationId,
+      ledgerName,
+      transactionId,
+      metadata,
+    });
+  }
+
+  /**
+   * Removes one metadata key from a transaction of a ledger of the
+   * organization of the `X-Organization-Id` header.
+   *
+   * It is safe to repeat: a key that is not there is not an error.
+   *
+   * - `204`: the key is gone (or was never there).
+   * - `400`: `VALIDATION` (the ledger name or the id has a wrong shape).
+   * - `404`: `LEDGER_NOT_FOUND` (no such ledger in this organization) or
+   *   `TRANSACTION_NOT_FOUND` (no such transaction in this ledger).
+   */
+  @Delete(`:transactionId/${METADATA_PATH}/:key`)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async deleteMetadata(
+    @OrganizationId() organizationId: string,
+    @Param('ledgerName', { schema: ledgerNameSchema }) ledgerName: string,
+    @Param('transactionId', { schema: transactionIdSchema }) transactionId: string,
+    @Param('key', { schema: metadataKeySchema }) key: string,
+  ): Promise<void> {
+    await this.deleteTransactionMetadata.execute({
+      organizationId,
+      ledgerName,
+      transactionId,
+      key,
+    });
   }
 }

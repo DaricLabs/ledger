@@ -1,4 +1,12 @@
-import { AccountAddress, AssetCode, Money, MoneyAmountOutOfRangeError } from '@ledger/domain';
+import {
+  AccountAddress,
+  AssetCode,
+  InvalidMetadataError,
+  Metadata,
+  MetadataLimitExceededError,
+  Money,
+  MoneyAmountOutOfRangeError,
+} from '@ledger/domain';
 import {
   AccountBalance,
   balanceKeyText,
@@ -24,6 +32,7 @@ const props = (overrides: Partial<ITransactionProps> = {}): ITransactionProps =>
   ledgerId: '0190a5d4-7b3c-7abc-8def-0123456789ad',
   reference: null,
   postings: [posting('world', 'a', 100n)],
+  metadata: Metadata.empty(),
   postedAt: new Date('2026-11-07T10:00:00.000Z'),
   createdAt: new Date('2026-11-07T10:00:01.000Z'),
   revertedAt: null,
@@ -41,13 +50,15 @@ const held = (account: string, amount: bigint, asset = usd) =>
 
 describe('Transaction.reconstitute', () => {
   it('keeps what it was given', () => {
-    const transaction = Transaction.reconstitute(props({ reference: 'order-1' }));
+    const metadata = Metadata.of({ orderId: '42' });
+    const transaction = Transaction.reconstitute(props({ reference: 'order-1', metadata }));
 
     expect(transaction.id).toBe('0190a5d4-7b3c-7abc-8def-0123456789ab');
     expect(transaction.organizationId).toBe('0190a5d4-7b3c-7abc-8def-0123456789ac');
     expect(transaction.ledgerId).toBe('0190a5d4-7b3c-7abc-8def-0123456789ad');
     expect(transaction.reference).toBe('order-1');
     expect(transaction.postings).toHaveLength(1);
+    expect(transaction.metadata).toBe(metadata);
     expect(transaction.postedAt).toEqual(new Date('2026-11-07T10:00:00.000Z'));
     expect(transaction.createdAt).toEqual(new Date('2026-11-07T10:00:01.000Z'));
   });
@@ -82,13 +93,15 @@ describe('Transaction.reconstitute', () => {
 
 describe('Transaction.create', () => {
   it('keeps what it was given', () => {
-    const transaction = Transaction.create(props({ reference: 'order-1' }));
+    const metadata = Metadata.of({ orderId: '42' });
+    const transaction = Transaction.create(props({ reference: 'order-1', metadata }));
 
     expect(transaction.id).toBe('0190a5d4-7b3c-7abc-8def-0123456789ab');
     expect(transaction.organizationId).toBe('0190a5d4-7b3c-7abc-8def-0123456789ac');
     expect(transaction.ledgerId).toBe('0190a5d4-7b3c-7abc-8def-0123456789ad');
     expect(transaction.reference).toBe('order-1');
     expect(transaction.postings).toHaveLength(1);
+    expect(transaction.metadata.entries).toEqual({ orderId: '42' });
     expect(transaction.postedAt).toEqual(new Date('2026-11-07T10:00:00.000Z'));
     expect(transaction.createdAt).toEqual(new Date('2026-11-07T10:00:01.000Z'));
   });
@@ -328,10 +341,13 @@ describe('Transaction.reverse', () => {
     ]);
   });
 
-  it('has no reference, and is not reverted', () => {
-    const reversal = original().reverse({ id: REVERSAL_ID, at });
+  it('has no reference and no metadata, and is not reverted', () => {
+    const reversal = Transaction.create(
+      props({ reference: 'order-1', metadata: Metadata.of({ orderId: '42' }) }),
+    ).reverse({ id: REVERSAL_ID, at });
 
     expect(reversal.reference).toBeNull();
+    expect(reversal.metadata.size).toBe(0);
     expect(reversal.isReverted).toBe(false);
   });
 
@@ -417,13 +433,15 @@ describe('Transaction.asCreated', () => {
     Transaction.reconstitute(
       props({
         reference: 'order-1',
+        metadata: Metadata.of({ orderId: '42', note: 'edited later' }),
         revertedAt: new Date('2026-11-08T10:00:00.000Z'),
         revertedByTransactionId: '0190a5d4-7b3c-7abc-8def-0123456789ae',
       }),
     );
+  const createdMetadata = Metadata.of({ orderId: '42' });
 
   it('clears the revert state and keeps everything else', () => {
-    const created = reverted().asCreated();
+    const created = reverted().asCreated(createdMetadata);
 
     expect(created.isReverted).toBe(false);
     expect(created.revertedAt).toBeNull();
@@ -435,11 +453,104 @@ describe('Transaction.asCreated', () => {
     expect(created.createdAt).toEqual(reverted().createdAt);
   });
 
+  it('gives the metadata it was created with, not the one it has now', () => {
+    const created = reverted().asCreated(createdMetadata);
+
+    expect(created.metadata).toBe(createdMetadata);
+    expect(created.metadata.entries).toEqual({ orderId: '42' });
+  });
+
   it('does not change the transaction it is called on', () => {
     const transaction = reverted();
 
-    transaction.asCreated();
+    transaction.asCreated(createdMetadata);
 
     expect(transaction.isReverted).toBe(true);
+    expect(transaction.metadata.entries).toEqual({ orderId: '42', note: 'edited later' });
+  });
+});
+
+describe('Transaction metadata', () => {
+  const withEntries = (entries: Record<string, string>) =>
+    Transaction.reconstitute(props({ metadata: Metadata.of(entries) }));
+
+  describe('withMetadata', () => {
+    it('adds new keys, replaces a key that is there, and keeps the others', () => {
+      const updated = withEntries({ a: '1', b: '2' }).withMetadata({ b: '3', c: '4' });
+
+      expect(updated.metadata.entries).toEqual({ a: '1', b: '3', c: '4' });
+    });
+
+    it('gives a new transaction and leaves the old one as it was', () => {
+      const transaction = withEntries({ a: '1' });
+
+      const updated = transaction.withMetadata({ b: '2' });
+
+      expect(updated).not.toBe(transaction);
+      expect(transaction.metadata.entries).toEqual({ a: '1' });
+    });
+
+    it('changes nothing but the metadata', () => {
+      const transaction = Transaction.reconstitute(
+        props({
+          reference: 'order-1',
+          postings: [posting('world', 'a', 100n), posting('a', 'b', 40n)],
+          revertedAt: new Date('2026-11-08T10:00:00.000Z'),
+          revertedByTransactionId: '0190a5d4-7b3c-7abc-8def-0123456789ae',
+        }),
+      );
+
+      const updated = transaction.withMetadata({ note: 'late' });
+
+      expect(updated.id).toBe(transaction.id);
+      expect(updated.organizationId).toBe(transaction.organizationId);
+      expect(updated.ledgerId).toBe(transaction.ledgerId);
+      expect(updated.reference).toBe('order-1');
+      expect(updated.postings).toEqual(transaction.postings);
+      expect(updated.postedAt).toEqual(transaction.postedAt);
+      expect(updated.createdAt).toEqual(transaction.createdAt);
+      expect(updated.isReverted).toBe(true);
+      expect(updated.revertedAt).toEqual(transaction.revertedAt);
+      expect(updated.revertedByTransactionId).toBe(transaction.revertedByTransactionId);
+    });
+
+    it('returns the same instance when every key already has this value', () => {
+      const transaction = withEntries({ a: '1', b: '2' });
+
+      expect(transaction.withMetadata({ a: '1' })).toBe(transaction);
+      expect(transaction.withMetadata({})).toBe(transaction);
+    });
+
+    it('uses the rules of Metadata', () => {
+      const transaction = withEntries({ a: '1' });
+
+      expect(() => transaction.withMetadata({ '': 'x' })).toThrow(InvalidMetadataError);
+      expect(() => transaction.withMetadata({ k: 'x'.repeat(16 * 1024 + 1) })).toThrow(
+        MetadataLimitExceededError,
+      );
+    });
+  });
+
+  describe('withoutMetadataKey', () => {
+    it('removes the key and keeps the others', () => {
+      const updated = withEntries({ a: '1', b: '2' }).withoutMetadataKey('a');
+
+      expect(updated.metadata.entries).toEqual({ b: '2' });
+    });
+
+    it('gives a new transaction and leaves the old one as it was', () => {
+      const transaction = withEntries({ a: '1' });
+
+      const updated = transaction.withoutMetadataKey('a');
+
+      expect(updated).not.toBe(transaction);
+      expect(transaction.metadata.entries).toEqual({ a: '1' });
+    });
+
+    it('returns the same instance when the key is not there', () => {
+      const transaction = withEntries({ a: '1' });
+
+      expect(transaction.withoutMetadataKey('missing')).toBe(transaction);
+    });
   });
 });

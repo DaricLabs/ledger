@@ -27,7 +27,15 @@ describe('toCreateTransactionRequestHash', () => {
 
   it('keeps its format: a change here would make remembered keys look like other requests', () => {
     expect(toCreateTransactionRequestHash(request).toString('hex')).toBe(
-      '2ffecbc37f86f017b549eb649904dc24f203a455b2d41449145d591f3413f7e3',
+      'dabac2d3d6f9b52c5fc5cfc0428e0a6ea21e6f4bf2e218c631d086ef7fc7d8ee',
+    );
+  });
+
+  it('keeps its format with metadata, with the keys sorted', () => {
+    const withMetadata = { ...request, metadata: { orderId: '42', channel: 'web' } };
+
+    expect(toCreateTransactionRequestHash(withMetadata).toString('hex')).toBe(
+      '41122282200edcb58fa17fc35c001d725c1fa9f36f779bcb1d475f7d5bcd64f9',
     );
   });
 
@@ -75,5 +83,34 @@ describe('toCreateTransactionRequestHash', () => {
     expect(toCreateTransactionRequestHash(none).equals(toCreateTransactionRequestHash(empty))).toBe(
       false,
     );
+  });
+
+  describe('metadata', () => {
+    const hashOf = (metadata?: Record<string, string>) =>
+      toCreateTransactionRequestHash({ ...request, metadata });
+
+    it('gives the same hash whatever the order of the keys', () => {
+      const one = hashOf({ orderId: '42', channel: 'web', a: '1' });
+      const other = hashOf({ a: '1', channel: 'web', orderId: '42' });
+
+      expect(one.equals(other)).toBe(true);
+    });
+
+    it('gives the same hash for no metadata and for empty metadata', () => {
+      expect(hashOf(undefined).equals(hashOf({}))).toBe(true);
+    });
+
+    it.each([
+      ['an added key', { orderId: '42' }, { orderId: '42', channel: 'web' }],
+      ['another value', { orderId: '42' }, { orderId: '43' }],
+      ['another key', { orderId: '42' }, { order: '42' }],
+      ['metadata against none', {}, { orderId: '42' }],
+    ])('gives another hash for %s', (_name, one, other) => {
+      expect(hashOf(one).equals(hashOf(other))).toBe(false);
+    });
+
+    it('does not let a key and a value move into each other', () => {
+      expect(hashOf({ ab: 'c' }).equals(hashOf({ a: 'bc' }))).toBe(false);
+    });
   });
 });

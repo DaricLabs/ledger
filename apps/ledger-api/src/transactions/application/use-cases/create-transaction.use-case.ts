@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { TenantTransaction } from '@ledger/database';
-import { AccountAddress, AssetCode, Money } from '@ledger/domain';
+import { AccountAddress, AssetCode, Metadata, Money, type MetadataEntries } from '@ledger/domain';
 import {
   ACCOUNT_BALANCE_REPOSITORY,
   type IAccountBalanceRepository,
@@ -57,6 +57,8 @@ export interface ICreateTransactionInput {
   /** The id the caller gives to the transaction. Leave it out for none. */
   reference?: string;
   postings: readonly IPostingInput[];
+  /** Free-form key/value pairs saved with the transaction. Leave it out for none. */
+  metadata?: MetadataEntries;
   /**
    * The `Idempotency-Key` of the request. Leave it out and the request runs
    * every time. With a key, the request runs once: the same key with the same
@@ -90,7 +92,9 @@ export interface ICreateTransactionResult {
  *    a posting that takes more than an account has;
  * 6. saves the new balances, the transaction and its postings;
  * 7. writes the `TRANSACTION_CREATED` journal entry and the
- *    `ledger.transaction.created` outbox event.
+ *    `ledger.transaction.created` outbox event. Both carry the metadata, so
+ *    the journal alone can rebuild the transaction (later edits of the
+ *    metadata have their own entries).
  *
  * Either all of it is saved or none. The journal entry takes a lock on the
  * ledger until the transaction ends, so the transactions of one ledger commit
@@ -104,13 +108,18 @@ export interface ICreateTransactionResult {
  * retry runs again. If the key was already used for the same request, nothing
  * else runs, and the first transaction is returned with `replayed: true`. If
  * it was used for another request, the call fails. Two calls with the same key
- * at the same time never both run: the second waits for the first.
+ * at the same time never both run: the second waits for the first. The
+ * metadata is part of the request: the same key with other metadata is another
+ * request. A repeat answers with the metadata of the first call, even if the
+ * metadata was edited after that.
  *
- * The domain checks the postings before any transaction is opened. Domain
+ * The domain checks the postings and the metadata before any transaction is
+ * opened. Domain
  * errors (`InvalidPostingError`, `InvalidTransactionError`,
  * `InsufficientFundsError`, `TransactionReferenceAlreadyExistsError`,
  * `IdempotencyKeyReusedError` and the errors of the value objects of
- * `@ledger/domain`) pass through unchanged. The presentation layer turns them
+ * `@ledger/domain`, like `InvalidMetadataError` and
+ * `MetadataLimitExceededError`) pass through unchanged. The presentation layer turns them
  * into HTTP responses.
  *
  * @throws LedgerNotFoundError If the organization has no ledger with this name.
@@ -135,6 +144,8 @@ export class CreateTransactionUseCase {
     // value, even if the caller changes `input` while we wait for the database.
     const reference = input.reference ?? null;
     const postings = input.postings.map(toPosting);
+    // `Metadata.of` copies and checks the input, so what we hash is what we save.
+    const metadata = Metadata.of(input.metadata ?? {});
     const idempotency =
       input.idempotencyKey === undefined
         ? null
@@ -144,6 +155,7 @@ export class CreateTransactionUseCase {
             requestHash: toCreateTransactionRequestHash({
               reference,
               postings: input.postings,
+              metadata: metadata.entries,
             }),
           };
 
@@ -162,7 +174,7 @@ export class CreateTransactionUseCase {
         });
         if (claim.replayed) {
           return {
-            transaction: await this.findReplayed(trx, ledger.id, claim.transactionId),
+            transaction: await this.findReplayed(trx, ledger.id, claim.transactionId, metadata),
             replayed: true,
           };
         }
@@ -175,6 +187,7 @@ export class CreateTransactionUseCase {
         ledgerId: ledger.id,
         reference,
         postings,
+        metadata,
         postedAt: now,
         createdAt: now,
       });
@@ -196,6 +209,7 @@ export class CreateTransactionUseCase {
         transactionId: transaction.id,
         payload: {
           reference: transaction.reference,
+          metadata: transaction.metadata.entries,
           postedAt: transaction.postedAt.toISOString(),
           postings: toPostingsPayload(transaction.postings),
         },
@@ -210,6 +224,7 @@ export class CreateTransactionUseCase {
           ledgerId: ledger.id,
           organizationId: transaction.organizationId,
           reference: transaction.reference,
+          metadata: transaction.metadata.entries,
           postedAt: transaction.postedAt.toISOString(),
           createdAt: transaction.createdAt.toISOString(),
           postings: toPostingsPayload(transaction.postings),
@@ -220,11 +235,16 @@ export class CreateTransactionUseCase {
     });
   }
 
-  /** Loads the transaction that a key points to. The key and the transaction are saved together. */
+  /**
+   * Loads the transaction that a key points to. The key and the transaction are
+   * saved together. `createdMetadata` is the metadata of this request, which is
+   * the metadata of the first call, because the hash of the two matched.
+   */
   private async findReplayed(
     trx: TenantTransaction,
     ledgerId: string,
     transactionId: string,
+    createdMetadata: Metadata,
   ): Promise<Transaction> {
     const transaction = await this.transactionRepository.findById(trx, ledgerId, transactionId);
     if (transaction === null) {
@@ -233,8 +253,8 @@ export class CreateTransactionUseCase {
       throw new Error(`Idempotency key points to a missing transaction (${transactionId})`);
     }
     // The answer of a repeat is the answer of the first call: the transaction
-    // as it was saved, even if it was reverted after that.
-    return transaction.asCreated();
+    // as it was saved, even if it was reverted or got other metadata after that.
+    return transaction.asCreated(createdMetadata);
   }
 }
 

@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { TenantTransaction } from '@ledger/database';
+import { Metadata } from '@ledger/domain';
 import {
   ACCOUNT_BALANCE_REPOSITORY,
   type IAccountBalanceRepository,
@@ -216,7 +217,8 @@ export class RevertTransactionUseCase {
       throw new Error(`Idempotency key points to a missing transaction (${transactionId})`);
     }
     // The answer of a repeat is the answer of the first call: the transaction
-    // as it was saved, even if it was reverted after that.
-    return transaction.asCreated();
+    // as it was saved, even if it was reverted or got metadata after that. A
+    // reversing transaction is made with no metadata.
+    return transaction.asCreated(Metadata.empty());
   }
 }
