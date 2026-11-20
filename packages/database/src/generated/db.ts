@@ -130,6 +130,9 @@ export interface Ledgers {
 }
 
 export interface OutboxEvents {
+  /**
+   * Id of the aggregate, 1 to 256 characters: a uuid, or an account address (the longest valid address has 256).
+   */
   aggregate_id: string;
   /**
    * Aggregate type name, e.g. transaction, account, ledger.
