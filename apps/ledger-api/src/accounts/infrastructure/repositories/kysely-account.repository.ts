@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { AccountAddress, AssetCode, Money } from '@ledger/domain';
+import { AccountAddress, AssetCode, Metadata, Money, type MetadataEntries } from '@ledger/domain';
 import { sql, unwrapTenantTransaction } from '@ledger/database/storage';
 import type { TenantTransaction } from '@ledger/database';
 import type {
@@ -13,6 +13,8 @@ import { Account } from '../../domain/entities/account.entity.js';
 interface IAccountRow {
   address: string;
   allow_overdraft: boolean;
+  /** A JSON object. `pg` reads a `json` column with `JSON.parse`. */
+  metadata: unknown;
   created_at: Date;
   /** Already a JavaScript array: `pg` reads a `json` column with `JSON.parse`. */
   balances: IBalanceJson[];
@@ -31,7 +33,7 @@ interface IBalanceJson {
 /**
  * The columns of an account, with its balances as one JSON array, so an
  * account and its balances always come from the same moment, and a page of
- * accounts needs one query. Callers add `where`, `order by` and `limit`.
+ * accounts needs one query. Callers add `where`, `order by`, `limit` or a locking clause.
  *
  * The balances are in the order of the asset codes, compared by character code
  * (`collate "C"`), so the order does not depend on the database settings.
@@ -41,6 +43,7 @@ interface IBalanceJson {
 const SELECT_ACCOUNT = sql`
   select a.address,
          a.allow_overdraft,
+         a.metadata,
          a.created_at,
          coalesce(
            (select json_agg(
@@ -77,6 +80,45 @@ export class KyselyAccountRepository implements IAccountRepository {
     return rows[0] === undefined ? null : toAccount(rows[0]);
   }
 
+  async lockByAddress(
+    trx: TenantTransaction,
+    ledgerId: string,
+    address: AccountAddress,
+  ): Promise<Account | null> {
+    // `of a` locks only the account row, and not the balance rows that the
+    // balances column reads. `for no key update` is enough: the column we
+    // change later is not a key. It still waits for another writer of the same
+    // row, and it does not block the rows that point to it (the balances).
+    const { rows } = await sql<IAccountRow>`
+      ${SELECT_ACCOUNT}
+       where a.organization_id = current_organization_id()
+         and a.ledger_id = ${ledgerId}::uuid
+         and a.address = ${address.value}
+         for no key update of a
+    `.execute(unwrapTenantTransaction(trx));
+
+    return rows[0] === undefined ? null : toAccount(rows[0]);
+  }
+
+  async updateMetadata(trx: TenantTransaction, ledgerId: string, account: Account): Promise<void> {
+    // Only `metadata` is written: with `allow_overdraft`, it is the only column
+    // of an account that the runtime role may update, and the overdraft rule is
+    // not changed here.
+    const result = await unwrapTenantTransaction(trx)
+      .updateTable('accounts')
+      .set({ metadata: account.metadata.entries })
+      .where('ledger_id', '=', ledgerId)
+      .where('address', '=', account.address.value)
+      .executeTakeFirstOrThrow();
+
+    // Row-level security hides the rows of other organizations, so an update
+    // for one of them would change 0 rows without an error. Do not let that
+    // pass quietly.
+    if (result.numUpdatedRows !== 1n) {
+      throw new Error(`Expected to update 1 account row, but updated ${result.numUpdatedRows}`);
+    }
+  }
+
   async findPage(
     trx: TenantTransaction,
     ledgerId: string,
@@ -107,6 +149,10 @@ function toAccount(row: IAccountRow): Account {
   return Account.reconstitute({
     address: AccountAddress.of(row.address),
     allowOverdraft: row.allow_overdraft,
+    // Safe cast: every account is saved with the default `{}` or from a
+    // `Metadata`, which allows string values only. The database itself only
+    // checks "a JSON object".
+    metadata: Metadata.reconstitute(row.metadata as MetadataEntries),
     createdAt: row.created_at,
     balances: row.balances.map((balance) =>
       Money.of(AssetCode.of(balance.asset), BigInt(balance.amount)),

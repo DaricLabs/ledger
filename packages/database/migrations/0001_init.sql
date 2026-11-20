@@ -356,7 +356,7 @@ create table outbox_events (
     check (aggregate_type ~ '^[a-z0-9_]+$' and length(aggregate_type) <= 64),
 
   constraint outbox_events_aggregate_id_length
-    check (length(aggregate_id) between 1 and 128),
+    check (length(aggregate_id) between 1 and 256),
 
   constraint outbox_events_event_version_positive
     check (event_version >= 1),
@@ -422,18 +422,42 @@ create index idx_idempotency_keys_expires_at
 
 -- ---------- Balance overdraft enforcement --------------------------------
 
+create or replace function account_overdraft_lock_key(
+  p_organization_id uuid,
+  p_ledger_id       uuid,
+  p_address         text
+)
+returns bigint
+language sql
+immutable
+as $$
+  select hashtextextended(
+    'account_overdraft:' || p_organization_id::text || ':' || p_ledger_id::text || ':' || p_address,
+    0
+  );
+$$;
+-- Key of the advisory lock that guards the overdraft flag of one account.
+-- Two accounts can share a key by chance (64-bit hash). That only makes one
+-- wait for the other, it never breaks the rules.
+
 create or replace function balances_set_allow_overdraft()
 returns trigger
 language plpgsql
 as $$
 begin
+  -- A shared lock: many inserts for the same account run together. It is held
+  -- until this transaction ends, so the flag cannot change before the new
+  -- balance row is committed (see accounts_lock_overdraft_change).
+  perform pg_advisory_xact_lock_shared(
+    account_overdraft_lock_key(new.organization_id, new.ledger_id, new.account_address)
+  );
+
   select a.allow_overdraft
     into new.allow_overdraft
   from accounts a
   where a.organization_id = new.organization_id
     and a.ledger_id = new.ledger_id
-    and a.address = new.account_address
-  for share;
+    and a.address = new.account_address;
 
   if not found then
     raise exception 'account not found for balance: org=% ledger=% account=%',
@@ -445,9 +469,11 @@ begin
   return new;
 end;
 $$;
--- FOR SHARE blocks a concurrent flag change on the account until this insert
--- commits; otherwise the new balance row could keep a stale flag. (The
--- application role therefore needs UPDATE on accounts, which it has anyway.)
+-- The advisory lock stops a concurrent flag change until this insert commits;
+-- otherwise the new balance row could keep a stale flag. The account ROW is
+-- not locked on purpose: a row lock (FOR SHARE) would make every balance
+-- insert wait for any other update of the account, such as a metadata edit,
+-- which has nothing to do with the flag.
 -- Copies the account's overdraft flag into a balance row. The account is
 -- guaranteed to exist by the balances -> accounts foreign key; the explicit
 -- lookup both materialises the flag and yields a clear error if invariants
@@ -477,6 +503,32 @@ before update of balance
 on balances
 for each row execute function balances_touch_updated_at();
 -- Keeps updated_at current for balance mutations.
+
+create or replace function accounts_lock_overdraft_change()
+returns trigger
+language plpgsql
+as $$
+begin
+  -- Waits for the balance inserts of this account that are still open (they
+  -- hold the shared lock), and keeps new ones out until this transaction ends.
+  perform pg_advisory_xact_lock(
+    account_overdraft_lock_key(new.organization_id, new.ledger_id, new.address)
+  );
+  return new;
+end;
+$$;
+-- Lock order: the account row (taken by the UPDATE), then this advisory lock.
+-- Balance inserts take only the advisory lock (shared), so they never wait for
+-- a row, and no cycle is possible.
+
+create trigger accounts_lock_overdraft_before_update
+before update of allow_overdraft
+on accounts
+for each row
+when (old.allow_overdraft is distinct from new.allow_overdraft)
+execute function accounts_lock_overdraft_change();
+-- Fires only when the flag changes. Edits of other columns (metadata) do not
+-- take the lock, so they never block balance inserts.
 
 create or replace function accounts_sync_allow_overdraft()
 returns trigger
@@ -796,6 +848,9 @@ comment on column ledger_audit_anchors.to_log_seq is
 comment on column outbox_events.aggregate_type is
   'Aggregate type name, e.g. transaction, account, ledger.';
 
+comment on column outbox_events.aggregate_id is
+  'Id of the aggregate, 1 to 256 characters: a uuid, or an account address (the longest valid address has 256).';
+
 comment on column idempotency_keys.operation is
   'Stable API operation name, e.g. transactions.create.';
 
@@ -828,7 +883,9 @@ grant select, insert on postings, ledger_logs, ledger_audit_anchors to ledger_ru
 grant select, insert on ledgers to ledger_runtime;
 grant update (metadata) on ledgers to ledger_runtime;
 
--- accounts: the balances trigger uses FOR SHARE, which needs a column UPDATE.
+-- accounts: the app edits metadata and may change the overdraft flag (the flag
+-- is guarded by an advisory lock, see balances_set_allow_overdraft). The column
+-- UPDATE grant is also what allows the locking read FOR NO KEY UPDATE.
 grant select, insert on accounts to ledger_runtime;
 grant update (metadata, allow_overdraft) on accounts to ledger_runtime;
 

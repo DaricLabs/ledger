@@ -22,11 +22,12 @@ export interface IAccountPage {
 }
 
 /**
- * The read side of accounts. Every method works inside a transaction the
- * caller owns.
+ * Reads accounts, and saves their metadata. Every method works inside a
+ * transaction the caller owns.
  *
- * It only reads. Accounts are made by `IAccountBalanceRepository`, because
- * they are made together with their balances when money first moves.
+ * It never makes an account and never changes a balance. Those are done by
+ * `IAccountBalanceRepository`, because accounts are made together with their
+ * balances when money first moves.
  */
 export interface IAccountRepository {
   /**
@@ -45,6 +46,39 @@ export interface IAccountRepository {
     ledgerId: string,
     address: AccountAddress,
   ): Promise<Account | null>;
+
+  /**
+   * Like `findByAddress`, and the account row is locked until the transaction
+   * ends, so no other transaction can edit its metadata in the meantime. A
+   * caller that waits for the lock sees the result of the transaction that
+   * held it.
+   *
+   * It is a lock for changing a column that is not a key (`metadata`), so it
+   * does not block the rows that point to this account (the balances, for
+   * example). A transaction that moves money through the account does not wait
+   * for it either. That needs two things in the database: the overdraft flag
+   * of a new balance row is guarded by an advisory lock and not by a lock on
+   * the account row, and `IAccountBalanceRepository.open` does not insert
+   * accounts that exist. The balance rows are not locked.
+   *
+   * @returns The account, or `null` if the ledger has none with this address.
+   */
+  lockByAddress(
+    trx: TenantTransaction,
+    ledgerId: string,
+    address: AccountAddress,
+  ): Promise<Account | null>;
+
+  /**
+   * Saves the metadata of an account that was loaded with `lockByAddress` in
+   * this transaction. Metadata is the only part of an account that this method
+   * changes. It does not touch the balances or the overdraft rule.
+   *
+   * @throws Error If no account row was updated. The caller locked the account
+   * in the same database transaction, so this means a bug and not a user
+   * mistake.
+   */
+  updateMetadata(trx: TenantTransaction, ledgerId: string, account: Account): Promise<void>;
 
   /**
    * Loads one page of the accounts of a ledger, sorted by address (ascending),
