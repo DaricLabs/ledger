@@ -431,6 +431,21 @@ describe('accounts (e2e)', () => {
         expect(got.body.metadata).toEqual({ a: '1' });
       });
 
+      it('saves and deletes metadata of an account with the longest address (256 characters)', async () => {
+        const organizationId = randomUUIDv7();
+        const longest = 'a'.repeat(256);
+        await createLedger(organizationId);
+        await move(organizationId, 'world', longest, '1').expect(201);
+
+        await saveMetadata(organizationId, longest, { a: '1' }).expect(204);
+        const saved = await getAccount(organizationId, longest).expect(200);
+        await deleteMetadata(organizationId, longest, 'a').expect(204);
+        const deleted = await getAccount(organizationId, longest).expect(200);
+
+        expect(saved.body.metadata).toEqual({ a: '1' });
+        expect(deleted.body.metadata).toEqual({});
+      });
+
       it('keeps values that look like JSON or SQL as plain text', async () => {
         const organizationId = await prepare();
         const tricky = { json: '{"a":1}', quote: `it's "x"`, unicode: 'é✓', empty: '' };

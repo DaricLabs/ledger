@@ -37,24 +37,45 @@ export class KyselyAccountBalanceRepository implements IAccountBalanceRepository
     for (const balance of balances) {
       accounts.set(balance.address.value, balance.allowOverdraft);
     }
-    await k
-      .insertInto('accounts')
-      .values(
-        [...accounts].map(([address, allowOverdraft]) => ({
-          // The tenant is the one set on the transaction. A row for another
-          // tenant is impossible, and row-level security would refuse it anyway.
-          organization_id: sql<string>`current_organization_id()`,
-          ledger_id: ledgerId,
-          address,
-          allow_overdraft: allowOverdraft,
-        })),
-      )
-      // An account that exists keeps its own rules. Waiting for a transaction
-      // that is creating the same account is what `DO NOTHING` does here.
-      .onConflict((conflict) => conflict.doNothing())
-      .execute();
+    // Only the accounts that are not there yet are inserted. An insert that
+    // hits an existing account waits for any open transaction that is updating
+    // that row (even one that only edits its metadata), so for the accounts
+    // that exist we skip the insert. A plain read does not wait.
+    const addresses = [...accounts.keys()];
+    const existing = new Set(
+      (
+        await k
+          .selectFrom('accounts')
+          .select('address')
+          .where('ledger_id', '=', ledgerId)
+          .where('address', 'in', addresses)
+          .execute()
+      ).map((row) => row.address),
+    );
+    const missing = [...accounts].filter(([address]) => !existing.has(address));
 
-    // `allow_overdraft` is not set here: a trigger copies it from the account.
+    if (missing.length > 0) {
+      await k
+        .insertInto('accounts')
+        .values(
+          missing.map(([address, allowOverdraft]) => ({
+            // The tenant is the one set on the transaction. A row for another
+            // tenant is impossible, and row-level security would refuse it anyway.
+            organization_id: sql<string>`current_organization_id()`,
+            ledger_id: ledgerId,
+            address,
+            allow_overdraft: allowOverdraft,
+          })),
+        )
+        // Another transaction can create the same account after the read above.
+        // The account that won keeps its own rules, and `DO NOTHING` waits for
+        // a transaction that is still creating it.
+        .onConflict((conflict) => conflict.doNothing())
+        .execute();
+    }
+
+    // `allow_overdraft` is not set here: a trigger copies it from the account
+    // (it takes a shared advisory lock, and not a lock on the account row).
     await k
       .insertInto('balances')
       .values(

@@ -223,6 +223,22 @@ describe('AccountsModule (real database)', () => {
     });
   });
 
+  it('saves and deletes metadata of an account with the longest address (256 characters)', async () => {
+    const { organizationId } = await setup();
+    const longest = 'a'.repeat(256);
+    await move(organizationId, 'world', longest, 100n);
+
+    await save(organizationId, { a: '1' }, longest);
+    await remove(organizationId, 'a', longest);
+    const state = await readState(organizationId);
+
+    expect((await read(organizationId, longest)).metadata.entries).toEqual({});
+    expect(state.events.slice(2).map((e) => [e.event_type, e.aggregate_id])).toEqual([
+      ['ledger.account.metadata.saved', longest],
+      ['ledger.account.metadata.deleted', longest],
+    ]);
+  });
+
   it('saves, logs and publishes nothing when nothing changes', async () => {
     const { organizationId } = await setup();
     await move(organizationId, 'world', 'users:1', 100n);
@@ -429,23 +445,29 @@ describe('AccountsModule (real database)', () => {
       );
     });
 
-    it('lets only one of many edits of the same key win, and logs each real change once', async () => {
+    it('lets only one of many edits of the same key win, and logs each of them once', async () => {
       const { organizationId } = await setup();
       await move(organizationId, 'world', 'users:1', 100n);
+      const values = Array.from({ length: 10 }, (_, i) => `v${i}`);
 
-      await Promise.all(
-        Array.from({ length: 10 }, (_, i) => save(organizationId, { winner: `v${i}` })),
-      );
+      await Promise.all(values.map((winner) => save(organizationId, { winner })));
       const state = await readState(organizationId);
 
       const metadata = (await read(organizationId)).metadata.entries;
       expect(Object.keys(metadata)).toEqual(['winner']);
-      // The last journal entry is the value that is stored now.
-      const last = state.logs.at(-1)!;
-      expect(last.payload).toEqual({ address: 'users:1', metadata });
+      // Every value is different, so every edit is a real change: 2 entries from
+      // the setup (ledger, transaction) and 10 from the edits, each with an event.
+      expect(state.logs).toHaveLength(12);
+      expect(state.events).toHaveLength(12);
       expect(state.logs.map((log) => log.seq)).toEqual(
-        Array.from({ length: state.logs.length }, (_, i) => String(i + 1)),
+        Array.from({ length: 12 }, (_, i) => String(i + 1)),
       );
+      const recorded = state.logs
+        .slice(2)
+        .map((log) => (log.payload as { metadata: { winner: string } }).metadata.winner);
+      expect([...recorded].sort()).toEqual([...values].sort());
+      // The last journal entry is the value that is stored now.
+      expect(recorded.at(-1)).toBe(metadata['winner']);
     });
 
     it('does not deadlock with transactions that move money through the same account', async () => {

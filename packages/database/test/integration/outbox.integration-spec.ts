@@ -104,14 +104,22 @@ describe('outbox_events', () => {
     ],
     ['an empty aggregate_id', { aggregate_id: '' }, 'outbox_events_aggregate_id_length'],
     [
-      'an aggregate_id over 128 characters',
-      { aggregate_id: 'a'.repeat(129) },
+      'an aggregate_id over 256 characters',
+      { aggregate_id: 'a'.repeat(257) },
       'outbox_events_aggregate_id_length',
     ],
   ])('rejects %s', async (_label, values, constraint) => {
     await expect(
       withLedger((trx, org, ledgerId) => insertOutboxEvent(trx, org, ledgerId, values)),
     ).rejects.toMatchObject({ code: '23514', constraint });
+  });
+
+  it('accepts an aggregate_id of exactly 256 characters, the longest account address', async () => {
+    const id = await withLedger((trx, org, ledgerId) =>
+      insertOutboxEvent(trx, org, ledgerId, { aggregate_id: 'a'.repeat(256) }),
+    );
+
+    expect(id).toBeGreaterThan(0);
   });
 
   it.each(['Ledger.created', 'ledger', 'ledger..created'])(

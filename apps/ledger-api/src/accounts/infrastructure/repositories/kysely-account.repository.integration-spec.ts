@@ -335,27 +335,53 @@ describe('KyselyAccountRepository metadata', () => {
 
     describe('the lock', () => {
       /**
-       * Locks the account in a transaction that stays open until `release` is
-       * called. Resolves when the lock is taken.
+       * Starts a metadata edit that stays open: the account is locked, its
+       * metadata is changed, and the transaction is not committed until
+       * `release` is called. Resolves when the edit is open. If the edit fails
+       * to start, it throws.
        */
-      async function holdLock(organizationId: string, ledgerId: string) {
+      async function startEdit(organizationId: string, ledgerId: string) {
         let release!: () => void;
         const released = new Promise<void>((resolve) => {
           release = resolve;
         });
-        let taken!: () => void;
-        const lockTaken = new Promise<void>((resolve) => {
-          taken = resolve;
+        let opened!: () => void;
+        const isOpen = new Promise<void>((resolve) => {
+          opened = resolve;
         });
 
         const done = withTenant(db, organizationId, async (trx) => {
-          await repository.lockByAddress(trx, ledgerId, address('users:1'));
-          taken();
+          const account = await repository.lockByAddress(trx, ledgerId, address('users:1'));
+          await repository.updateMetadata(trx, ledgerId, account!.withMetadata({ held: 'yes' }));
+          opened();
           await released;
         });
-        await Promise.race([lockTaken, done]); // `done` ends first only if locking failed
+        await Promise.race([isOpen, done]); // `done` ends first only if the edit failed
         return { release, done };
       }
+
+      /**
+       * Runs `test` while a metadata edit is open. The edit is always released
+       * and awaited at the end, also when `test` throws, so a failing test
+       * never leaves a transaction (and a lock) behind.
+       */
+      async function whileEditIsOpen<T>(
+        organizationId: string,
+        ledgerId: string,
+        test: () => Promise<T>,
+      ): Promise<T> {
+        const edit = await startEdit(organizationId, ledgerId);
+        try {
+          return await test();
+        } finally {
+          edit.release();
+          await edit.done;
+        }
+      }
+
+      /** A transaction that fails with an error instead of waiting for a lock. */
+      const noWait = (trx: TenantTransaction) =>
+        sql`set local lock_timeout = '300ms'`.execute(unwrapTenantTransaction(trx));
 
       const prepare = async () => {
         const organizationId = ids.next();
@@ -369,62 +395,156 @@ describe('KyselyAccountRepository metadata', () => {
 
       it('makes a second locking read wait until the first transaction ends', async () => {
         const { organizationId, ledgerId } = await prepare();
-        const first = await holdLock(organizationId, ledgerId);
 
-        // A short lock timeout turns "waits forever" into an error we can check.
-        const second = withTenant(db, organizationId, async (trx) => {
-          await sql`set local lock_timeout = '300ms'`.execute(unwrapTenantTransaction(trx));
-          await repository.lockByAddress(trx, ledgerId, address('users:1'));
+        await whileEditIsOpen(organizationId, ledgerId, async () => {
+          const second = withTenant(db, organizationId, async (trx) => {
+            await noWait(trx); // turns "waits forever" into an error we can check
+            await repository.lockByAddress(trx, ledgerId, address('users:1'));
+          });
+
+          await expect(second).rejects.toMatchObject({ code: SqlState.LockNotAvailable });
         });
-
-        await expect(second).rejects.toMatchObject({ code: SqlState.LockNotAvailable });
-        first.release();
-        await first.done;
       });
 
-      it('lets the next locking read go on after the first transaction ends', async () => {
+      it('lets the next locking read go on after the first transaction ends, and it sees the saved edit', async () => {
         const { organizationId, ledgerId } = await prepare();
-        const first = await holdLock(organizationId, ledgerId);
-        first.release();
-        await first.done;
+        const edit = await startEdit(organizationId, ledgerId);
+        edit.release();
+        await edit.done;
 
         const found = await withTenant(db, organizationId, (trx) =>
           repository.lockByAddress(trx, ledgerId, address('users:1')),
         );
 
-        expect(found?.address.value).toBe('users:1');
+        expect(found?.metadata.entries).toEqual({ held: 'yes' });
       });
 
       it('does not block a plain read of the same account', async () => {
         const { organizationId, ledgerId } = await prepare();
-        const first = await holdLock(organizationId, ledgerId);
 
-        const found = await withTenant(db, organizationId, async (trx) => {
-          await sql`set local lock_timeout = '300ms'`.execute(unwrapTenantTransaction(trx));
-          return repository.findByAddress(trx, ledgerId, address('users:1'));
-        });
+        const found = await whileEditIsOpen(organizationId, ledgerId, () =>
+          withTenant(db, organizationId, async (trx) => {
+            await noWait(trx);
+            return repository.findByAddress(trx, ledgerId, address('users:1'));
+          }),
+        );
 
         expect(found?.address.value).toBe('users:1');
-        first.release();
-        await first.done;
+        expect(found?.metadata.entries).toEqual({}); // the open edit is not visible yet
       });
 
-      it('does not block the balance rows, so money can still move through a locked account', async () => {
+      it('does not block the balance rows, so money can still move through the account', async () => {
         const { organizationId, ledgerId } = await prepare();
-        const first = await holdLock(organizationId, ledgerId);
 
-        const moved = await withTenant(db, organizationId, async (trx) => {
-          await sql`set local lock_timeout = '300ms'`.execute(unwrapTenantTransaction(trx));
-          const [balance] = await balances.lock(trx, ledgerId, [
-            { address: address('users:1'), asset: asset('USD') },
-          ]);
-          await balances.save(trx, ledgerId, [balance!]);
-          return balance;
-        });
+        const moved = await whileEditIsOpen(organizationId, ledgerId, () =>
+          withTenant(db, organizationId, async (trx) => {
+            await noWait(trx);
+            const [balance] = await balances.lock(trx, ledgerId, [
+              { address: address('users:1'), asset: asset('USD') },
+            ]);
+            await balances.save(trx, ledgerId, [balance!]);
+            return balance;
+          }),
+        );
 
         expect(moved?.balance.amount).toBe(100n);
-        first.release();
-        await first.done;
+      });
+
+      it('does not block open for a balance that exists, or for a new asset of the account', async () => {
+        const { organizationId, ledgerId } = await prepare();
+
+        const opened = await whileEditIsOpen(organizationId, ledgerId, () =>
+          withTenant(db, organizationId, async (trx) => {
+            await noWait(trx);
+            await balances.open(trx, ledgerId, [
+              AccountBalance.open(address('users:1'), asset('USD')), // exists
+              AccountBalance.open(address('users:1'), asset('EUR')), // new balance row
+            ]);
+            return balances.lock(trx, ledgerId, [
+              { address: address('users:1'), asset: asset('USD') },
+              { address: address('users:1'), asset: asset('EUR') },
+            ]);
+          }),
+        );
+
+        expect(opened.map((b) => [b.asset.value, b.balance.amount])).toEqual([
+          ['USD', 100n],
+          ['EUR', 0n],
+        ]);
+      });
+
+      it('does not block open for a new account together with an account that is being edited', async () => {
+        const { organizationId, ledgerId } = await prepare();
+
+        const opened = await whileEditIsOpen(organizationId, ledgerId, () =>
+          withTenant(db, organizationId, async (trx) => {
+            await noWait(trx);
+            await balances.open(trx, ledgerId, [
+              AccountBalance.open(address('users:1'), asset('USD')),
+              AccountBalance.open(address('users:2'), asset('USD')),
+            ]);
+            return repository.findByAddress(trx, ledgerId, address('users:2'));
+          }),
+        );
+
+        expect(opened?.address.value).toBe('users:2');
+      });
+
+      it('still keeps the overdraft flag of a new balance row in step with the account', async () => {
+        const { organizationId, ledgerId } = await prepare();
+        const setFlag = (trx: TenantTransaction, value: boolean) =>
+          unwrapTenantTransaction(trx)
+            .updateTable('accounts')
+            .set({ allow_overdraft: value })
+            .where('ledger_id', '=', ledgerId)
+            .where('address', '=', 'users:1')
+            .execute();
+
+        let releaseInsert!: () => void;
+        const insertMayEnd = new Promise<void>((resolve) => {
+          releaseInsert = resolve;
+        });
+        let insertDone!: () => void;
+        const insertIsOpen = new Promise<void>((resolve) => {
+          insertDone = resolve;
+        });
+        // A balance insert that stays open: it holds the shared guard of the flag.
+        const insert = withTenant(db, organizationId, async (trx) => {
+          await balances.open(trx, ledgerId, [
+            AccountBalance.open(address('users:1'), asset('EUR')),
+          ]);
+          insertDone();
+          await insertMayEnd;
+        });
+        await Promise.race([insertIsOpen, insert]);
+
+        try {
+          // The flag change has to wait for the insert, or the new row would keep the old flag.
+          const change = withTenant(db, organizationId, async (trx) => {
+            await noWait(trx);
+            await setFlag(trx, true);
+          });
+          await expect(change).rejects.toMatchObject({ code: SqlState.LockNotAvailable });
+        } finally {
+          releaseInsert();
+          await insert;
+        }
+
+        // After the insert is committed, the change goes through and reaches the new row.
+        await withTenant(db, organizationId, (trx) => setFlag(trx, true));
+        const flags = await withTenant(db, organizationId, (trx) =>
+          unwrapTenantTransaction(trx)
+            .selectFrom('balances')
+            .select(['asset', 'allow_overdraft'])
+            .where('ledger_id', '=', ledgerId)
+            .where('account_address', '=', 'users:1')
+            .orderBy('asset')
+            .execute(),
+        );
+        expect(flags).toEqual([
+          { asset: 'EUR', allow_overdraft: true },
+          { asset: 'USD', allow_overdraft: true },
+        ]);
       });
     });
   });

@@ -55,8 +55,11 @@ export interface IAccountRepository {
    *
    * It is a lock for changing a column that is not a key (`metadata`), so it
    * does not block the rows that point to this account (the balances, for
-   * example), and a transaction that moves money through the account does not
-   * wait for it. The balance rows are not locked.
+   * example). A transaction that moves money through the account does not wait
+   * for it either. That needs two things in the database: the overdraft flag
+   * of a new balance row is guarded by an advisory lock and not by a lock on
+   * the account row, and `IAccountBalanceRepository.open` does not insert
+   * accounts that exist. The balance rows are not locked.
    *
    * @returns The account, or `null` if the ledger has none with this address.
    */

@@ -5,6 +5,7 @@ import { createRuntimeDb, inTenant } from '../support/db.js';
 import { insertAccount, insertLedger } from '../support/fixtures.js';
 
 const CHECK_VIOLATION = '23514';
+const LOCK_NOT_AVAILABLE = '55P03';
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 describe('balances', () => {
@@ -230,6 +231,121 @@ describe('balances', () => {
       expect(afterChange.updated_at.getTime()).toBeGreaterThan(created.updated_at.getTime());
       expect(afterFlagCopy.allow_overdraft).toBe(true);
       expect(afterFlagCopy.updated_at).toEqual(afterChange.updated_at);
+    });
+  });
+
+  describe('locks around the overdraft flag', () => {
+    /** Runs `work` in a tenant transaction that stays open until `release` is called. */
+    async function holdOpen(
+      setup: Setup,
+      work: (trx: Transaction<DB>) => Promise<unknown>,
+    ): Promise<{ release: () => Promise<void> }> {
+      let end!: () => void;
+      const mayEnd = new Promise<void>((resolve) => {
+        end = resolve;
+      });
+      let started!: () => void;
+      const isOpen = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      const done = inTenant(db, setup.org, async (trx) => {
+        await work(trx);
+        started();
+        await mayEnd;
+      });
+      await Promise.race([isOpen, done]); // `done` ends first only if `work` failed
+      return {
+        release: async () => {
+          end();
+          await done;
+        },
+      };
+    }
+
+    const noWait = (trx: Transaction<DB>) => sql`set local lock_timeout = '300ms'`.execute(trx);
+
+    function editMetadata(trx: Transaction<DB>, { org, ledgerId }: Setup, address: string) {
+      return trx
+        .updateTable('accounts')
+        .set({ metadata: { edited: 'yes' } })
+        .where('organization_id', '=', org)
+        .where('ledger_id', '=', ledgerId)
+        .where('address', '=', address)
+        .execute();
+    }
+
+    it('lets a balance be created while the metadata of its account is being edited', async () => {
+      const setup = await createLedgerWithAccounts({ 'users:1': { allowOverdraft: false } });
+      const edit = await holdOpen(setup, (trx) => editMetadata(trx, setup, 'users:1'));
+
+      try {
+        const balance = await inTenant(db, setup.org, async (trx) => {
+          await noWait(trx);
+          await insertBalance(trx, setup, 'users:1');
+          return readBalance(trx, setup, 'users:1');
+        });
+
+        expect(balance.allow_overdraft).toBe(false);
+      } finally {
+        await edit.release();
+      }
+    });
+
+    it('makes a flag change wait for a balance insert that is still open', async () => {
+      const setup = await createLedgerWithAccounts({ 'users:1': { allowOverdraft: false } });
+      const insert = await holdOpen(setup, (trx) => insertBalance(trx, setup, 'users:1'));
+
+      try {
+        await expect(
+          inTenant(db, setup.org, async (trx) => {
+            await noWait(trx);
+            await trx
+              .updateTable('accounts')
+              .set({ allow_overdraft: true })
+              .where('organization_id', '=', setup.org)
+              .execute();
+          }),
+        ).rejects.toMatchObject({ code: LOCK_NOT_AVAILABLE });
+      } finally {
+        await insert.release();
+      }
+
+      // Once the insert is committed, the change goes through and reaches the new row.
+      await inTenant(db, setup.org, (trx) =>
+        trx
+          .updateTable('accounts')
+          .set({ allow_overdraft: true })
+          .where('organization_id', '=', setup.org)
+          .execute(),
+      );
+      const balance = await inTenant(db, setup.org, (trx) => readBalance(trx, setup, 'users:1'));
+      expect(balance.allow_overdraft).toBe(true);
+    });
+
+    it('makes a balance insert wait for a flag change that is still open, and then use the new flag', async () => {
+      const setup = await createLedgerWithAccounts({ 'users:1': { allowOverdraft: false } });
+      const change = await holdOpen(setup, (trx) =>
+        trx
+          .updateTable('accounts')
+          .set({ allow_overdraft: true })
+          .where('organization_id', '=', setup.org)
+          .execute(),
+      );
+
+      try {
+        await expect(
+          inTenant(db, setup.org, async (trx) => {
+            await noWait(trx);
+            await insertBalance(trx, setup, 'users:1');
+          }),
+        ).rejects.toMatchObject({ code: LOCK_NOT_AVAILABLE });
+      } finally {
+        await change.release();
+      }
+
+      await inTenant(db, setup.org, (trx) => insertBalance(trx, setup, 'users:1'));
+      const balance = await inTenant(db, setup.org, (trx) => readBalance(trx, setup, 'users:1'));
+      expect(balance.allow_overdraft).toBe(true);
     });
   });
 
