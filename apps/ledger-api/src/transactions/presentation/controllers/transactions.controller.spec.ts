@@ -734,23 +734,23 @@ describe('TransactionsController', () => {
     const reversalId = '0190a5d4-7b3c-7abc-8def-0123456789cd';
 
     /** The new transaction that the use case returns: the postings of the original, reversed. */
-    const reversal = () =>
-      Transaction.create({
-        id: reversalId,
-        organizationId,
-        ledgerId: '0190a5d4-7b3c-7abc-8def-0123456789ac',
-        reference: null,
-        postings: [
-          Posting.of(
-            AccountAddress.of('users:1'),
-            AccountAddress.of('world'),
-            Money.of(AssetCode.of('USD'), 1050n),
-          ),
-        ],
-        metadata: Metadata.empty(),
-        postedAt: new Date('2026-11-08T10:00:00.000Z'),
-        createdAt: new Date('2026-11-08T10:00:00.000Z'),
-      });
+    const reversalProps = () => ({
+      id: reversalId,
+      organizationId,
+      ledgerId: '0190a5d4-7b3c-7abc-8def-0123456789ac',
+      reference: null,
+      postings: [
+        Posting.of(
+          AccountAddress.of('users:1'),
+          AccountAddress.of('world'),
+          Money.of(AssetCode.of('USD'), 1050n),
+        ),
+      ],
+      metadata: Metadata.empty(),
+      postedAt: new Date('2026-11-08T10:00:00.000Z'),
+      createdAt: new Date('2026-11-08T10:00:00.000Z'),
+    });
+    const reversal = () => Transaction.create(reversalProps());
 
     beforeEach(() => {
       executeRevert.mockImplementation(async () => ({ transaction: reversal(), replayed: false }));
@@ -787,14 +787,75 @@ describe('TransactionsController', () => {
       expect(res.headers.location).toBe(`/ledgers/my-ledger/transactions/${reversalId}`);
     });
 
-    it('gives the use case the organization, the ledger name, the id and no key', async () => {
+    it('gives the use case the organization, the ledger name, the id, no metadata and no key', async () => {
       await revert(transactionId, 'my-ledger').expect(201);
 
       expect(executeRevert).toHaveBeenCalledExactlyOnceWith({
         organizationId,
         ledgerName: 'my-ledger',
         transactionId,
+        metadata: {},
         idempotencyKey: undefined,
+      });
+    });
+
+    describe('body', () => {
+      it('takes an empty object as no metadata', async () => {
+        await revert().send({}).expect(201);
+
+        expect(executeRevert.mock.calls[0]?.[0].metadata).toEqual({});
+      });
+
+      it('gives the metadata of the body to the use case', async () => {
+        await revert()
+          .send({ metadata: { reason: 'duplicate charge', ticket: '42' } })
+          .expect(201);
+
+        expect(executeRevert.mock.calls[0]?.[0].metadata).toEqual({
+          reason: 'duplicate charge',
+          ticket: '42',
+        });
+      });
+
+      it('answers with the metadata that the use case saved', async () => {
+        executeRevert.mockResolvedValueOnce({
+          transaction: Transaction.create({
+            ...reversalProps(),
+            metadata: Metadata.of({ reason: 'duplicate charge' }),
+          }),
+          replayed: false,
+        });
+
+        const res = await revert()
+          .send({ metadata: { reason: 'duplicate charge' } })
+          .expect(201);
+
+        expect(res.body.metadata).toEqual({ reason: 'duplicate charge' });
+      });
+
+      it.each([
+        ['an unknown field', { metdata: { reason: 'x' } }, ''],
+        ['metadata that is not an object', { metadata: 'duplicate' }, 'metadata'],
+        ['a value that is not a string', { metadata: { reason: 42 } }, 'metadata.reason'],
+        ['an empty key', { metadata: { '': 'x' } }, 'metadata.'],
+      ])('refuses %s with 400 VALIDATION', async (_name, body, path) => {
+        const res = await revert().send(body).expect(400);
+
+        expect(res.body.errorCode).toBe('VALIDATION');
+        if (path !== '') {
+          expect(res.body.details.map((d: { path: string }) => d.path)).toContain(path);
+        }
+        expect(executeRevert).not.toHaveBeenCalled();
+      });
+
+      it('turns METADATA_LIMIT_EXCEEDED from the use case into 400', async () => {
+        executeRevert.mockRejectedValueOnce(new MetadataLimitExceededError('entries', 128));
+
+        const res = await revert()
+          .send({ metadata: { reason: 'x' } })
+          .expect(400);
+
+        expect(res.body.errorCode).toBe('METADATA_LIMIT_EXCEEDED');
       });
     });
 

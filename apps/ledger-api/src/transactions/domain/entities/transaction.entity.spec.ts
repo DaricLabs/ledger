@@ -351,6 +351,20 @@ describe('Transaction.reverse', () => {
     expect(reversal.isReverted).toBe(false);
   });
 
+  it('gives the new transaction the metadata of the caller, and never the one of the original', () => {
+    const reversal = Transaction.create(
+      props({ metadata: Metadata.of({ orderId: '42', reason: 'original' }) }),
+    ).reverse({ id: REVERSAL_ID, at, metadata: Metadata.of({ reason: 'duplicate charge' }) });
+
+    expect(reversal.metadata.entries).toEqual({ reason: 'duplicate charge' });
+  });
+
+  it('has no metadata when the caller gives none', () => {
+    const reversal = original().reverse({ id: REVERSAL_ID, at, metadata: Metadata.empty() });
+
+    expect(reversal.metadata.size).toBe(0);
+  });
+
   it('does not change the original', () => {
     const transaction = original();
 

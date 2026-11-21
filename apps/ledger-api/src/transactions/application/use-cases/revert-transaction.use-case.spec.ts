@@ -1,5 +1,12 @@
 import type { TenantTransaction } from '@ledger/database';
-import { AccountAddress, AssetCode, Metadata, Money } from '@ledger/domain';
+import {
+  AccountAddress,
+  AssetCode,
+  InvalidMetadataError,
+  Metadata,
+  MetadataLimitExceededError,
+  Money,
+} from '@ledger/domain';
 import {
   AccountBalance,
   balanceKeyText,
@@ -176,6 +183,84 @@ describe('RevertTransactionUseCase', () => {
     expect(transactionRepository.insert.mock.calls[0]?.[1].metadata.size).toBe(0);
   });
 
+  describe('metadata', () => {
+    it('saves the metadata of the request on the reversing transaction', async () => {
+      const { useCase, transactionRepository } = setup();
+
+      const { transaction } = await useCase.execute({
+        ...input,
+        metadata: { reason: 'duplicate charge', ticket: '42' },
+      });
+
+      expect(transaction.metadata.entries).toEqual({ reason: 'duplicate charge', ticket: '42' });
+      expect(transactionRepository.insert.mock.calls[0]?.[1].metadata.entries).toEqual({
+        reason: 'duplicate charge',
+        ticket: '42',
+      });
+    });
+
+    it('does not copy the metadata of the original, even with metadata in the request', async () => {
+      const { useCase, transactionRepository } = setup();
+      transactionRepository.lockById.mockResolvedValueOnce(
+        original({ metadata: { orderId: '42', reason: 'original' } }),
+      );
+
+      const { transaction } = await useCase.execute({
+        ...input,
+        metadata: { reason: 'duplicate charge' },
+      });
+
+      expect(transaction.metadata.entries).toEqual({ reason: 'duplicate charge' });
+    });
+
+    it('puts the metadata in the journal entry and in the outbox event', async () => {
+      const { useCase, logs, outbox } = setup();
+
+      await useCase.execute({ ...input, metadata: { reason: 'duplicate charge' } });
+
+      expect(logs.append.mock.calls[0]?.[1].payload).toMatchObject({
+        metadata: { reason: 'duplicate charge' },
+      });
+      expect(outbox.append.mock.calls[0]?.[1].payload).toMatchObject({
+        metadata: { reason: 'duplicate charge' },
+      });
+    });
+
+    it('refuses metadata that is not valid before it opens a database transaction', async () => {
+      const { useCase, transactions } = setup();
+
+      await expect(
+        useCase.execute({ ...input, metadata: { '': 'no key' } }),
+      ).rejects.toBeInstanceOf(InvalidMetadataError);
+
+      expect(transactions.run).not.toHaveBeenCalled();
+    });
+
+    it('refuses metadata that is too big before it opens a database transaction', async () => {
+      const { useCase, transactions } = setup();
+      const tooMany = Object.fromEntries(Array.from({ length: 129 }, (_, i) => [`k${i}`, 'v']));
+
+      await expect(useCase.execute({ ...input, metadata: tooMany })).rejects.toBeInstanceOf(
+        MetadataLimitExceededError,
+      );
+
+      expect(transactions.run).not.toHaveBeenCalled();
+    });
+
+    it('does not change the metadata of the request when the caller changes its object later', async () => {
+      const { useCase, transactionRepository } = setup();
+      const metadata = { reason: 'duplicate charge' };
+      transactionRepository.lockById.mockImplementationOnce(async () => {
+        metadata.reason = 'changed during the request';
+        return original();
+      });
+
+      const { transaction } = await useCase.execute({ ...input, metadata });
+
+      expect(transaction.metadata.entries).toEqual({ reason: 'duplicate charge' });
+    });
+  });
+
   it('runs inside the transaction of the organization', async () => {
     const { useCase, transactions } = setup();
 
@@ -304,6 +389,7 @@ describe('RevertTransactionUseCase', () => {
           { source: 'platform:fees', destination: 'users:1', asset: 'USD', amount: '25' },
           { source: 'users:1', destination: 'world', asset: 'USD', amount: '1000' },
         ],
+        metadata: {},
       },
     });
   });
@@ -329,6 +415,7 @@ describe('RevertTransactionUseCase', () => {
           { source: 'platform:fees', destination: 'users:1', asset: 'USD', amount: '25' },
           { source: 'users:1', destination: 'world', asset: 'USD', amount: '1000' },
         ],
+        metadata: {},
       },
     });
     // The payload must be real JSON: a bigint would throw here.
@@ -421,6 +508,48 @@ describe('RevertTransactionUseCase', () => {
         requestHash: toRevertTransactionRequestHash({ transactionId: ORIGINAL_ID }),
         transactionId: REVERSAL_ID,
       });
+    });
+
+    it('puts the metadata in the hash of the request', async () => {
+      const { useCase, idempotencyKeys } = setup();
+
+      await useCase.execute({ ...keyed, metadata: { reason: 'duplicate charge' } });
+
+      expect(idempotencyKeys.claim.mock.calls[0]?.[2].requestHash).toEqual(
+        toRevertTransactionRequestHash({
+          transactionId: ORIGINAL_ID,
+          metadata: { reason: 'duplicate charge' },
+        }),
+      );
+    });
+
+    it('hashes a request with no metadata like before metadata existed', async () => {
+      const { useCase, idempotencyKeys } = setup();
+
+      await useCase.execute({ ...keyed, metadata: {} });
+
+      expect(idempotencyKeys.claim.mock.calls[0]?.[2].requestHash).toEqual(
+        toRevertTransactionRequestHash({ transactionId: ORIGINAL_ID }),
+      );
+    });
+
+    it('answers a replay with the metadata of the request, even if it was edited since', async () => {
+      const { useCase, idempotencyKeys, transactionRepository } = setup();
+      const first = original().reverse({
+        id: '0190a5d4-7b3c-7abc-8def-0123456789b0',
+        at: new Date('2026-11-16T12:00:00.000Z'),
+        metadata: Metadata.of({ reason: 'duplicate charge' }),
+      });
+      const edited = first.withMetadata({ reason: 'edited later', extra: 'added later' });
+      idempotencyKeys.claim.mockResolvedValueOnce({ replayed: true, transactionId: first.id });
+      transactionRepository.findById.mockResolvedValueOnce(edited);
+
+      const { transaction } = await useCase.execute({
+        ...keyed,
+        metadata: { reason: 'duplicate charge' },
+      });
+
+      expect(transaction.metadata.entries).toEqual({ reason: 'duplicate charge' });
     });
 
     it('returns the first result and writes nothing when the key was used before', async () => {
