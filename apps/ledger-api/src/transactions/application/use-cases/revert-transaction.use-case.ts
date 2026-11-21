@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { TenantTransaction } from '@ledger/database';
-import { Metadata } from '@ledger/domain';
+import { Metadata, type MetadataEntries } from '@ledger/domain';
 import {
   ACCOUNT_BALANCE_REPOSITORY,
   type IAccountBalanceRepository,
@@ -48,6 +48,12 @@ export interface IRevertTransactionInput {
   /** The id of the transaction to revert (UUIDv7). */
   transactionId: string;
   /**
+   * Metadata for the NEW transaction, like `{ reason: 'duplicate charge' }`.
+   * Leave it out for none. The metadata of the transaction that is reverted is
+   * never copied.
+   */
+  metadata?: MetadataEntries;
+  /**
    * The `Idempotency-Key` of the request. Leave it out and the request runs
    * every time (a second revert of the same transaction is then refused). With
    * a key, the request runs once: the same key with the same request gives the
@@ -94,20 +100,30 @@ export interface IRevertTransactionResult {
  *
  * The reversing transaction is a normal transaction: it has its own id, no
  * reference, and the time of the revert as `postedAt`. It is not backdated, so
- * the list of transactions stays in order. It can be reverted too.
+ * the list of transactions stays in order. It can be reverted too. Its
+ * metadata is the metadata of the request (a `reason`, for example) and
+ * nothing else: the metadata of the original is not copied.
  *
  * The journal entry and the event are about the NEW transaction (its id is the
  * `transactionId` of the entry and the `aggregateId` of the event), and their
  * payload holds the id of the transaction that was reverted. One entry is
- * enough to rebuild what happened: it has the postings of the new transaction.
+ * enough to rebuild what happened: it has the postings and the metadata of the
+ * new transaction. Like on create, later edits of the metadata have their own
+ * entries.
  *
  * **Idempotency.** Works as in `CreateTransactionUseCase`: the key is claimed
  * in the same database transaction as the money, so a failed request leaves no
  * key and a retry runs again. The key is scoped to the `transactions.revert`
  * operation, so the same key text can also be used to create a transaction.
+ * The metadata is part of the request: the same key with other metadata is
+ * another request. A repeat answers with the metadata of the first call, even
+ * if it was edited since.
  *
  * @throws LedgerNotFoundError If the organization has no ledger with this name.
  * @throws TransactionNotFoundError If the ledger has no transaction with this id.
+ * @throws InvalidMetadataError If `metadata` has an empty key or a non-string value.
+ * @throws MetadataLimitExceededError If a key, a value or the metadata is too big,
+ * or it has too many keys.
  * @throws TransactionAlreadyRevertedError If the transaction was reverted before.
  * @throws InsufficientFundsError If an account does not have enough money to
  * give back.
@@ -129,14 +145,19 @@ export class RevertTransactionUseCase {
   async execute(input: IRevertTransactionInput): Promise<IRevertTransactionResult> {
     // Read once, before any `await`, like the other use cases: the hash and the
     // work must use the same value, even if the caller changes `input` meanwhile.
+    // `Metadata.of` copies and checks the input, so what we hash is what we save.
     const { transactionId } = input;
+    const metadata = Metadata.of(input.metadata ?? {});
     const idempotency =
       input.idempotencyKey === undefined
         ? null
         : {
             operation: TRANSACTION_OPERATION.REVERT,
             key: input.idempotencyKey,
-            requestHash: toRevertTransactionRequestHash({ transactionId }),
+            requestHash: toRevertTransactionRequestHash({
+              transactionId,
+              metadata: metadata.entries,
+            }),
           };
 
     return this.transactions.run(input.organizationId, async (trx) => {
@@ -154,7 +175,7 @@ export class RevertTransactionUseCase {
         });
         if (claim.replayed) {
           return {
-            transaction: await this.findReplayed(trx, ledger.id, claim.transactionId),
+            transaction: await this.findReplayed(trx, ledger.id, claim.transactionId, metadata),
             replayed: true,
           };
         }
@@ -165,7 +186,7 @@ export class RevertTransactionUseCase {
         throw new TransactionNotFoundError(transactionId);
       }
 
-      const reversal = original.reverse({ id: reversalId, at: new Date() });
+      const reversal = original.reverse({ id: reversalId, at: new Date(), metadata });
 
       const current = await this.balances.lock(trx, ledger.id, reversal.touchedBalances());
       await this.balances.save(trx, ledger.id, reversal.applyTo(current));
@@ -182,6 +203,7 @@ export class RevertTransactionUseCase {
           revertedTransactionId: original.id,
           postedAt: reversal.postedAt.toISOString(),
           postings: toPostingsPayload(reversal.postings),
+          metadata: reversal.metadata.entries,
         },
       });
       await this.outbox.append(trx, {
@@ -197,6 +219,7 @@ export class RevertTransactionUseCase {
           postedAt: reversal.postedAt.toISOString(),
           createdAt: reversal.createdAt.toISOString(),
           postings: toPostingsPayload(reversal.postings),
+          metadata: reversal.metadata.entries,
         },
       });
 
@@ -204,11 +227,17 @@ export class RevertTransactionUseCase {
     });
   }
 
-  /** Loads the transaction that a key points to. The key and the transaction are saved together. */
+  /**
+   * Loads the transaction that a key points to. The key and the transaction
+   * are saved together. `createdMetadata` is the metadata of this request,
+   * which is the metadata of the first call, because the hash of the two
+   * matched.
+   */
   private async findReplayed(
     trx: TenantTransaction,
     ledgerId: string,
     transactionId: string,
+    createdMetadata: Metadata,
   ): Promise<Transaction> {
     const transaction = await this.transactionRepository.findById(trx, ledgerId, transactionId);
     if (transaction === null) {
@@ -217,8 +246,8 @@ export class RevertTransactionUseCase {
       throw new Error(`Idempotency key points to a missing transaction (${transactionId})`);
     }
     // The answer of a repeat is the answer of the first call: the transaction
-    // as it was saved, even if it was reverted or got metadata after that. A
-    // reversing transaction is made with no metadata.
-    return transaction.asCreated(Metadata.empty());
+    // as it was saved, even if it was reverted or its metadata was edited
+    // after that.
+    return transaction.asCreated(createdMetadata);
   }
 }

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { MetadataEntries } from '@ledger/domain';
+import { toSortedMetadataEntries } from './sorted-metadata-entries.mapper.js';
 
 /** The parts of a create request that make it the same request or another one. */
 export interface ICreateTransactionRequestFingerprint {
@@ -56,7 +57,7 @@ const FORMAT_VERSION = 1;
 export function toCreateTransactionRequestHash(
   request: ICreateTransactionRequestFingerprint,
 ): Buffer {
-  const metadata = sortedEntries(request.metadata ?? {});
+  const metadata = toSortedMetadataEntries(request.metadata ?? {});
   const text = JSON.stringify([
     FORMAT_VERSION,
     request.reference ?? null,
@@ -69,9 +70,4 @@ export function toCreateTransactionRequestHash(
     ...(metadata.length === 0 ? [] : [metadata]),
   ]);
   return createHash('sha256').update(text).digest();
-}
-
-/** The `[key, value]` pairs of metadata, sorted by key. Keys are unique, so there are no ties. */
-function sortedEntries(metadata: MetadataEntries): [string, string][] {
-  return Object.entries(metadata).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
 }

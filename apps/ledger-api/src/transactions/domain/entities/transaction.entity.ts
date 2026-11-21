@@ -238,19 +238,22 @@ export class Transaction {
    * have to pay `a` before it got the money back.
    *
    * The new transaction has no reference, because a reference belongs to one
-   * transaction, and no metadata, because metadata describes the facts of one
-   * transaction (an order id, a payment id) and the revert has its own. It is
-   * not saved and it does not apply anything. The caller
+   * transaction. Its metadata is only what the caller gives for the revert (a
+   * `reason`, for example), and empty by default. The metadata of this
+   * transaction is never copied, because it describes the facts of this one
+   * (an order id, a payment id) and the revert has its own. The new
+   * transaction is not saved and it does not apply anything. The caller
    * applies it like any new transaction (`touchedBalances` and `applyTo`),
    * which fails if the money was spent in the meantime. This transaction is
    * not changed: the caller saves that it was reverted.
    *
-   * @param reversal The `id` of the new transaction, and `at`, the time it
-   * happened and was saved.
+   * @param reversal The `id` of the new transaction, `at`, the time it
+   * happened and was saved, and the optional `metadata` of the revert. A
+   * `Metadata` is already checked.
    * @throws {TransactionAlreadyRevertedError} If this transaction was
    * reverted before.
    */
-  reverse(reversal: { id: string; at: Date }): Transaction {
+  reverse(reversal: { id: string; at: Date; metadata?: Metadata }): Transaction {
     if (this.isReverted) {
       throw new TransactionAlreadyRevertedError(this.props.id);
     }
@@ -260,7 +263,7 @@ export class Transaction {
       ledgerId: this.props.ledgerId,
       reference: null,
       postings: this.props.postings.map((posting) => posting.reversed()).reverse(),
-      metadata: Metadata.empty(),
+      metadata: reversal.metadata ?? Metadata.empty(),
       postedAt: reversal.at,
       createdAt: reversal.at,
     });

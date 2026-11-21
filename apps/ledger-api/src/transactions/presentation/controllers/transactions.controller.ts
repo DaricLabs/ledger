@@ -40,6 +40,10 @@ import {
   listTransactionsQuerySchema,
   type ListTransactionsQueryDto,
 } from '../dto/list-transactions-query.dto.js';
+import {
+  revertTransactionSchema,
+  type RevertTransactionDto,
+} from '../dto/revert-transaction.dto.js';
 import { transactionIdSchema } from '../dto/transaction-id.dto.js';
 import {
   toTransactionPageResponseDto,
@@ -211,7 +215,12 @@ export class TransactionsController {
    * `X-Organization-Id` header: makes a new transaction that moves the same
    * money back (every posting goes the other way, in the opposite order), and
    * marks the old one as reverted. The old transaction is not changed
-   * otherwise. The request has no body.
+   * otherwise.
+   *
+   * The body is optional. It can have `metadata`, an object of strings like
+   * `{ "reason": "duplicate charge" }`, saved with the NEW transaction. Use
+   * ids, not personal data: the journal keeps what is written. The metadata of
+   * the old transaction is not copied.
    *
    * The response is the NEW transaction, in the same shape as the one of the
    * create call. Its `Location` header is its URL. It has no reference and
@@ -224,13 +233,17 @@ export class TransactionsController {
    *
    * **Safe to repeat.** Send an `Idempotency-Key` header, like on create. A
    * repeat answers like the first call: `201`, the same body and `Location`,
-   * plus `Idempotent-Replayed: true`. Without a key, a second revert of the
-   * same transaction is refused with `TRANSACTION_ALREADY_REVERTED`.
+   * plus `Idempotent-Replayed: true`. The metadata is part of the request, and
+   * a repeat answers with the metadata of the first call, even if it was
+   * edited since. Without a key, a second revert of the same transaction is
+   * refused with `TRANSACTION_ALREADY_REVERTED`.
    *
    * - `201`: the transaction was reverted (or, with `Idempotent-Replayed:
    *   true`, it was reverted by an earlier call with the same key).
-   * - `400`: `VALIDATION` (the ledger name or the id has a wrong shape, or a
-   *   bad `Idempotency-Key`).
+   * - `400`: `VALIDATION` (the ledger name or the id has a wrong shape, the
+   *   body has an unknown field or bad metadata, or a bad `Idempotency-Key`)
+   *   or `METADATA_LIMIT_EXCEEDED` (a key, a value or the metadata is too big,
+   *   or it has too many keys).
    * - `404`: `LEDGER_NOT_FOUND` (no such ledger in this organization) or
    *   `TRANSACTION_NOT_FOUND` (no such transaction in this ledger).
    * - `409`: `TRANSACTION_ALREADY_REVERTED`.
@@ -244,12 +257,14 @@ export class TransactionsController {
     @Param('ledgerName', { schema: ledgerNameSchema }) ledgerName: string,
     @Param('transactionId', { schema: transactionIdSchema }) transactionId: string,
     @IdempotencyKey() idempotencyKey: string | undefined,
+    @Body({ schema: revertTransactionSchema }) body: RevertTransactionDto,
     @Res({ passthrough: true }) response: Response,
   ): Promise<ITransactionResponse> {
     const { transaction, replayed } = await this.revertTransaction.execute({
       organizationId,
       ledgerName,
       transactionId,
+      metadata: body.metadata,
       idempotencyKey,
     });
     // The location is the NEW transaction, not the one in the URL.

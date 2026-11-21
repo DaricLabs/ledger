@@ -612,6 +612,105 @@ describe('transactions (e2e)', () => {
       expect(res.body.errorCode).toBe('VALIDATION');
     });
 
+    describe('metadata', () => {
+      it('saves the metadata of the body on the new transaction, and not on the old one', async () => {
+        const { organizationId, id } = await prepare();
+
+        const res = await revertTransaction(organizationId, id)
+          .send({ metadata: { reason: 'duplicate charge', ticket: '42' } })
+          .expect(201);
+
+        expect(res.body.metadata).toEqual({ reason: 'duplicate charge', ticket: '42' });
+        const reversal = await getTransaction(organizationId, res.body.id).expect(200);
+        expect(reversal.body.metadata).toEqual({ reason: 'duplicate charge', ticket: '42' });
+        const old = await getTransaction(organizationId, id).expect(200);
+        expect(old.body.metadata).toEqual({});
+        const list = await listTransactions(organizationId).expect(200);
+        expect(list.body.data[0].metadata).toEqual({ reason: 'duplicate charge', ticket: '42' });
+      });
+
+      it('does not copy the metadata of the old transaction', async () => {
+        const organizationId = randomUUIDv7();
+        await createLedger(organizationId);
+        const created = await createTransaction(organizationId, {
+          postings: [posting('world', 'users:1', '1000')],
+          metadata: { orderId: '42' },
+        }).expect(201);
+
+        const res = await revertTransaction(organizationId, created.body.id)
+          .send({ metadata: { reason: 'duplicate charge' } })
+          .expect(201);
+
+        expect(res.body.metadata).toEqual({ reason: 'duplicate charge' });
+      });
+
+      it('takes an empty object like no body', async () => {
+        const { organizationId, id } = await prepare();
+
+        const res = await revertTransaction(organizationId, id).send({}).expect(201);
+
+        expect(res.body.metadata).toEqual({});
+      });
+
+      it('can be edited later like the metadata of any transaction', async () => {
+        const { organizationId, id } = await prepare();
+        const res = await revertTransaction(organizationId, id)
+          .send({ metadata: { reason: 'duplicate charge' } })
+          .expect(201);
+
+        await request(app.getHttpServer())
+          .post(`/ledgers/main/transactions/${res.body.id}/metadata`)
+          .set(ORGANIZATION_ID_HEADER, organizationId)
+          .send({ reason: 'fraud' })
+          .expect(204);
+
+        const reversal = await getTransaction(organizationId, res.body.id).expect(200);
+        expect(reversal.body.metadata).toEqual({ reason: 'fraud' });
+      });
+
+      it.each([
+        ['an unknown field', { metdata: { reason: 'x' } }],
+        ['metadata with a number as value', { metadata: { n: 1 } }],
+        ['metadata that is a string', { metadata: 'duplicate' }],
+      ])('returns 400 VALIDATION for %s, and reverts nothing', async (_name, body) => {
+        const { organizationId, id } = await prepare();
+
+        const res = await revertTransaction(organizationId, id).send(body).expect(400);
+
+        expect(res.body.errorCode).toBe('VALIDATION');
+        const old = await getTransaction(organizationId, id).expect(200);
+        expect(old.body.revertedByTransactionId).toBeNull();
+        const list = await listTransactions(organizationId).expect(200);
+        expect(list.body.data).toHaveLength(1);
+      });
+
+      it('returns 400 METADATA_LIMIT_EXCEEDED for too many keys, and reverts nothing', async () => {
+        const { organizationId, id } = await prepare();
+        const tooMany = Object.fromEntries(Array.from({ length: 129 }, (_, i) => [`k${i}`, 'v']));
+
+        const res = await revertTransaction(organizationId, id)
+          .send({ metadata: tooMany })
+          .expect(400);
+
+        expect(res.body.errorCode).toBe('METADATA_LIMIT_EXCEEDED');
+        const old = await getTransaction(organizationId, id).expect(200);
+        expect(old.body.revertedByTransactionId).toBeNull();
+      });
+
+      it('lets a later revert of the revert carry its own metadata', async () => {
+        const { organizationId, id } = await prepare();
+        const first = await revertTransaction(organizationId, id)
+          .send({ metadata: { reason: 'duplicate charge' } })
+          .expect(201);
+
+        const second = await revertTransaction(organizationId, first.body.id)
+          .send({ metadata: { reason: 'reverted by mistake' } })
+          .expect(201);
+
+        expect(second.body.metadata).toEqual({ reason: 'reverted by mistake' });
+      });
+    });
+
     describe('Idempotency-Key', () => {
       it('reverts once and answers a repeat with the same body and Location, marked as a replay', async () => {
         const { organizationId, id } = await prepare();
@@ -657,6 +756,56 @@ describe('transactions (e2e)', () => {
 
         const res = await revertTransaction(organizationId, other.body.id)
           .set('Idempotency-Key', 'key-1')
+          .expect(422);
+
+        expect(res.body.errorCode).toBe('IDEMPOTENCY_KEY_REUSED');
+      });
+
+      it('answers a repeat with the metadata of the first call, even after an edit', async () => {
+        const { organizationId, id } = await prepare();
+        const body = { metadata: { reason: 'duplicate charge' } };
+        const first = await revertTransaction(organizationId, id)
+          .set('Idempotency-Key', 'key-1')
+          .send(body)
+          .expect(201);
+        await request(app.getHttpServer())
+          .post(`/ledgers/main/transactions/${first.body.id}/metadata`)
+          .set(ORGANIZATION_ID_HEADER, organizationId)
+          .send({ reason: 'edited later', extra: 'added later' })
+          .expect(204);
+
+        const second = await revertTransaction(organizationId, id)
+          .set('Idempotency-Key', 'key-1')
+          .send(body)
+          .expect(201);
+
+        expect(second.headers['idempotent-replayed']).toBe('true');
+        expect(second.body).toEqual(first.body);
+        expect(second.body.metadata).toEqual({ reason: 'duplicate charge' });
+      });
+
+      it('returns 422 IDEMPOTENCY_KEY_REUSED when the key is used with other metadata', async () => {
+        const { organizationId, id } = await prepare();
+        await revertTransaction(organizationId, id)
+          .set('Idempotency-Key', 'key-1')
+          .send({ metadata: { reason: 'duplicate charge' } })
+          .expect(201);
+
+        const res = await revertTransaction(organizationId, id)
+          .set('Idempotency-Key', 'key-1')
+          .send({ metadata: { reason: 'fraud' } })
+          .expect(422);
+
+        expect(res.body.errorCode).toBe('IDEMPOTENCY_KEY_REUSED');
+      });
+
+      it('returns 422 IDEMPOTENCY_KEY_REUSED when a key without metadata is repeated with metadata', async () => {
+        const { organizationId, id } = await prepare();
+        await revertTransaction(organizationId, id).set('Idempotency-Key', 'key-1').expect(201);
+
+        const res = await revertTransaction(organizationId, id)
+          .set('Idempotency-Key', 'key-1')
+          .send({ metadata: { reason: 'duplicate charge' } })
           .expect(422);
 
         expect(res.body.errorCode).toBe('IDEMPOTENCY_KEY_REUSED');
