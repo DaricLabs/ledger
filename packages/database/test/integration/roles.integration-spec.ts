@@ -28,7 +28,7 @@ const READ_AND_ADD: Privilege[] = ['SELECT', 'INSERT'];
  * A new table must be added here, so every new grant is a conscious decision.
  */
 const EXPECTED_RUNTIME_ACCESS: Record<string, ExpectedAccess> = {
-  ledgers: { table: READ_AND_ADD, updatableColumns: ['metadata'] },
+  ledgers: { table: READ_AND_ADD, updatableColumns: ['deleted_at', 'metadata'] },
   accounts: { table: READ_AND_ADD, updatableColumns: ['allow_overdraft', 'metadata'] },
   transactions: {
     table: READ_AND_ADD,

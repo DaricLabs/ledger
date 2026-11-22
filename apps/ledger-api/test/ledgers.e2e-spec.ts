@@ -43,6 +43,11 @@ describe('ledgers (e2e)', () => {
       .set(ORGANIZATION_ID_HEADER, organizationId)
       .send(body);
 
+  const deleteLedger = (organizationId: string, name: string) =>
+    request(app.getHttpServer())
+      .delete(`/ledgers/${name}`)
+      .set(ORGANIZATION_ID_HEADER, organizationId);
+
   const deleteMetadata = (organizationId: string, name: string, key: string) =>
     request(app.getHttpServer())
       .delete(`/ledgers/${name}/metadata/${encodeURIComponent(key)}`)
@@ -351,6 +356,149 @@ describe('ledgers (e2e)', () => {
       const res = await deleteMetadata(randomUUIDv7(), 'Not-Valid', 'env').expect(400);
 
       expect(res.body.errorCode).toBe('VALIDATION');
+    });
+  });
+
+  describe('DELETE /ledgers/:name', () => {
+    it('returns 204 with no body, and the ledger is gone', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId, { name: 'main' }).expect(201);
+
+      const res = await deleteLedger(organizationId, 'main').expect(204);
+
+      expect(res.text).toBe('');
+      const after = await getLedger(organizationId, 'main').expect(404);
+      expect(after.body).toEqual({
+        errorCode: 'LEDGER_NOT_FOUND',
+        errorMessage: 'Ledger "main" not found',
+      });
+    });
+
+    it('leaves the deleted ledger out of the list and keeps the others', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId, { name: 'keep' }).expect(201);
+      await createLedger(organizationId, { name: 'gone' }).expect(201);
+
+      await deleteLedger(organizationId, 'gone').expect(204);
+
+      const res = await listLedgers(organizationId).expect(200);
+      expect(res.body.data.map((ledger: { name: string }) => ledger.name)).toEqual(['keep']);
+    });
+
+    it('returns 404 LEDGER_NOT_FOUND when it is deleted a second time', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId, { name: 'main' }).expect(201);
+      await deleteLedger(organizationId, 'main').expect(204);
+
+      const res = await deleteLedger(organizationId, 'main').expect(404);
+
+      expect(res.body.errorCode).toBe('LEDGER_NOT_FOUND');
+    });
+
+    it('keeps the name reserved: creating it again gives 409 LEDGER_ALREADY_EXISTS', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId, { name: 'main' }).expect(201);
+      await deleteLedger(organizationId, 'main').expect(204);
+
+      const res = await createLedger(organizationId, { name: 'main' }).expect(409);
+
+      expect(res.body.errorCode).toBe('LEDGER_ALREADY_EXISTS');
+      await getLedger(organizationId, 'main').expect(404); // and it did not come back
+    });
+
+    it('still lets another organization use the name', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId, { name: 'main' }).expect(201);
+      await deleteLedger(organizationId, 'main').expect(204);
+
+      await createLedger(randomUUIDv7(), { name: 'main' }).expect(201);
+    });
+
+    it('answers 404 LEDGER_NOT_FOUND to metadata changes of the deleted ledger', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId, { name: 'main', metadata: { env: 'prod' } }).expect(201);
+      await deleteLedger(organizationId, 'main').expect(204);
+
+      const saved = await saveMetadata(organizationId, 'main', { env: 'staging' }).expect(404);
+      const removed = await deleteMetadata(organizationId, 'main', 'env').expect(404);
+
+      expect(saved.body.errorCode).toBe('LEDGER_NOT_FOUND');
+      expect(removed.body.errorCode).toBe('LEDGER_NOT_FOUND');
+    });
+
+    it('answers 404 LEDGER_NOT_FOUND to the transactions and accounts of the deleted ledger', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId, { name: 'main' }).expect(201);
+      const created = await request(app.getHttpServer())
+        .post('/ledgers/main/transactions')
+        .set(ORGANIZATION_ID_HEADER, organizationId)
+        .send({
+          postings: [{ source: 'world', destination: 'users:1', asset: 'USD', amount: '100' }],
+        })
+        .expect(201);
+      const transactionId: string = created.body.id;
+      await deleteLedger(organizationId, 'main').expect(204);
+
+      const asOrganization = (req: request.Test) => req.set(ORGANIZATION_ID_HEADER, organizationId);
+      const http = () => request(app.getHttpServer());
+      const responses = await Promise.all([
+        asOrganization(http().post('/ledgers/main/transactions')).send({
+          postings: [{ source: 'world', destination: 'users:1', asset: 'USD', amount: '1' }],
+        }),
+        asOrganization(http().get('/ledgers/main/transactions')),
+        asOrganization(http().get(`/ledgers/main/transactions/${transactionId}`)),
+        asOrganization(http().post(`/ledgers/main/transactions/${transactionId}/revert`)).send({}),
+        asOrganization(http().get('/ledgers/main/accounts')),
+        asOrganization(http().get('/ledgers/main/accounts/users:1')),
+      ]);
+
+      for (const res of responses) {
+        expect(res.status).toBe(404);
+        expect(res.body.errorCode).toBe('LEDGER_NOT_FOUND');
+      }
+    });
+
+    it('can delete a ledger that still holds money', async () => {
+      const organizationId = randomUUIDv7();
+      await createLedger(organizationId, { name: 'main' }).expect(201);
+      await request(app.getHttpServer())
+        .post('/ledgers/main/transactions')
+        .set(ORGANIZATION_ID_HEADER, organizationId)
+        .send({
+          postings: [{ source: 'world', destination: 'users:1', asset: 'USD', amount: '100' }],
+        })
+        .expect(201);
+
+      await deleteLedger(organizationId, 'main').expect(204);
+    });
+
+    it('returns 404 LEDGER_NOT_FOUND for a name the organization does not have', async () => {
+      const res = await deleteLedger(randomUUIDv7(), 'unknown').expect(404);
+
+      expect(res.body.errorCode).toBe('LEDGER_NOT_FOUND');
+    });
+
+    it('returns 404 LEDGER_NOT_FOUND for the ledger of another organization, and does not delete it', async () => {
+      const owner = randomUUIDv7();
+      await createLedger(owner, { name: 'main', metadata: { env: 'prod' } }).expect(201);
+
+      const res = await deleteLedger(randomUUIDv7(), 'main').expect(404);
+
+      expect(res.body.errorCode).toBe('LEDGER_NOT_FOUND');
+      const unchanged = await getLedger(owner, 'main').expect(200);
+      expect(unchanged.body.metadata).toEqual({ env: 'prod' });
+    });
+
+    it('returns 400 VALIDATION for a name with a wrong shape', async () => {
+      const res = await deleteLedger(randomUUIDv7(), 'Not-Valid').expect(400);
+
+      expect(res.body.errorCode).toBe('VALIDATION');
+    });
+
+    it('returns 400 INVALID_REQUEST when the organization header is missing', async () => {
+      const res = await request(app.getHttpServer()).delete('/ledgers/main').expect(400);
+
+      expect(res.body.errorCode).toBe('INVALID_REQUEST');
     });
   });
 

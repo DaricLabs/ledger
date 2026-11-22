@@ -38,6 +38,15 @@
 --   continuity. This is a deliberate, narrow exception to the "no stored
 --   procedures" guideline.
 --
+-- Ledger deletion model:
+--   A ledger is never removed. Deleting it sets ledgers.deleted_at (a soft
+--   delete), because logs, postings and audit anchors are append-only and
+--   must stay readable. The row keeps its name, so a deleted name can never be
+--   used again (unique (organization_id, name) still holds). After that the
+--   row is frozen, and no new log can be written for it, so nothing else can
+--   change in a deleted ledger either. The application treats a deleted
+--   ledger as "not found".
+--
 -- Idempotency model:
 --   A key is claimed, the money is moved and the transaction is saved in ONE
 --   database transaction. So a key row exists only if its transaction exists.
@@ -121,6 +130,7 @@ create table ledgers (
   metadata        json_obj not null default '{}',
   last_log_seq    bigint not null default 0,
   created_at      timestamptz not null default now(),
+  deleted_at      timestamptz,
 
   unique (organization_id, name),
   unique (organization_id, id),
@@ -129,7 +139,8 @@ create table ledgers (
 );
 -- Surrogate ledger ID with a tenant-scoped unique ledger name.
 -- last_log_seq is the per-ledger log counter; only the ledger_logs
--- trigger below should change it.
+-- trigger below should change it. deleted_at is set once, when the ledger is
+-- deleted (see "Ledger deletion model" above).
 
 
 -- ---------- accounts -----------------------------------------------------
@@ -630,14 +641,20 @@ begin
   -- Bumping the counter takes a row lock on the ledger that is held until
   -- this transaction ends. Two log writers on one ledger therefore commit in
   -- seq order, and a rollback also rolls the counter back (no gaps).
+  --
+  -- A deleted ledger matches no row here, so no log can be added to it. Every
+  -- change to a ledger writes a log, so this one check stops all of them. If a
+  -- delete commits while another transaction is still working on the ledger,
+  -- the waiting log insert re-checks the row, finds it deleted, and fails.
   update public.ledgers l
      set last_log_seq = l.last_log_seq + 1
    where l.organization_id = new.organization_id
      and l.id = new.ledger_id
+     and l.deleted_at is null
   returning l.last_log_seq into new.seq;
 
   if not found then
-    raise exception 'ledger not found for log: org=% ledger=%',
+    raise exception 'ledger not found for log (missing or deleted): org=% ledger=%',
       new.organization_id,
       new.ledger_id;
   end if;
@@ -653,6 +670,25 @@ create trigger ledger_logs_assign_seq_before_insert
 before insert on ledger_logs
 for each row execute function ledger_logs_assign_seq();
 -- Runs before every log insert.
+
+create or replace function ledgers_refuse_update_when_deleted()
+returns trigger
+language plpgsql
+as $$
+begin
+  raise exception 'ledger % is deleted and cannot be changed', old.id;
+end;
+$$;
+-- A deleted ledger is frozen: its row cannot change any more, so the deletion
+-- cannot be undone and the metadata of a deleted ledger cannot be edited.
+
+create trigger ledgers_frozen_when_deleted
+before update on ledgers
+for each row
+when (old.deleted_at is not null)
+execute function ledgers_refuse_update_when_deleted();
+-- The WHEN clause skips the call for every live ledger, so normal updates
+-- (metadata, the log counter, the delete itself) pay nothing.
 
 
 -- ---------- TRUNCATE protection ------------------------------------------
@@ -809,6 +845,9 @@ create policy idempotency_keys_tenant_isolation on idempotency_keys
 comment on column ledgers.organization_id is
   'Opaque tenant reference owned by the Identity service.';
 
+comment on column ledgers.deleted_at is
+  'When the ledger was deleted, or NULL while it is live. Set once, never cleared. The name stays reserved.';
+
 comment on column accounts.organization_id is
   'Opaque tenant reference owned by the Identity service.';
 
@@ -879,9 +918,11 @@ comment on column idempotency_keys.expires_at is
 grant select, insert on postings, ledger_logs, ledger_audit_anchors to ledger_runtime;
 
 -- ledgers: last_log_seq is NOT updatable by the app. Only the SECURITY DEFINER
--- trigger function ledger_logs_assign_seq changes it.
+-- trigger function ledger_logs_assign_seq changes it. deleted_at is updatable
+-- so the app can delete a ledger; the frozen trigger makes that a one-way step.
+-- No DELETE: a ledger row is never removed.
 grant select, insert on ledgers to ledger_runtime;
-grant update (metadata) on ledgers to ledger_runtime;
+grant update (metadata, deleted_at) on ledgers to ledger_runtime;
 
 -- accounts: the app edits metadata and may change the overdraft flag (the flag
 -- is guarded by an advisory lock, see balances_set_allow_overdraft). The column

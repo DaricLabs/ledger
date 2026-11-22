@@ -4,9 +4,17 @@ import { LoggerModule } from 'nestjs-pino';
 import type { INestApplication } from '@nestjs/common';
 import { unwrapTenantTransaction, withTenant, type LedgerDatabase } from '@ledger/database/storage';
 import { KYSELY_DB } from '../core/database/database.constant.js';
-import { LEDGER_LOG_WRITER } from '../journal/application/ports/ledger-log-writer.port.js';
+import {
+  LEDGER_LOG_WRITER,
+  type ILedgerLogWriter,
+} from '../journal/application/ports/ledger-log-writer.port.js';
+import {
+  LEDGER_REPOSITORY,
+  type ILedgerRepository,
+} from './application/ports/ledger-repository.port.js';
 import { CreateLedgerUseCase } from './application/use-cases/create-ledger.use-case.js';
 import { DeleteLedgerMetadataUseCase } from './application/use-cases/delete-ledger-metadata.use-case.js';
+import { DeleteLedgerUseCase } from './application/use-cases/delete-ledger.use-case.js';
 import { GetLedgerUseCase } from './application/use-cases/get-ledger.use-case.js';
 import { ListLedgersUseCase } from './application/use-cases/list-ledgers.use-case.js';
 import { SaveLedgerMetadataUseCase } from './application/use-cases/save-ledger-metadata.use-case.js';
@@ -48,6 +56,7 @@ describe('LedgersModule (real database)', () => {
   let listLedgers: ListLedgersUseCase;
   let saveMetadata: SaveLedgerMetadataUseCase;
   let deleteMetadata: DeleteLedgerMetadataUseCase;
+  let deleteLedger: DeleteLedgerUseCase;
 
   beforeAll(async () => {
     app = await buildApp();
@@ -57,6 +66,7 @@ describe('LedgersModule (real database)', () => {
     listLedgers = app.get(ListLedgersUseCase);
     saveMetadata = app.get(SaveLedgerMetadataUseCase);
     deleteMetadata = app.get(DeleteLedgerMetadataUseCase);
+    deleteLedger = app.get(DeleteLedgerUseCase);
   });
 
   afterAll(async () => {
@@ -448,6 +458,195 @@ describe('LedgersModule (real database)', () => {
     });
   });
 
+  describe('deleting a ledger', () => {
+    const createMain = (organizationId: string, metadata: Record<string, string> = {}) =>
+      createLedger.execute({ organizationId, name: 'main', metadata });
+
+    it('marks the ledger deleted and writes a log and an outbox event together', async () => {
+      const organizationId = newOrganizationId();
+      const ledger = await createMain(organizationId, { env: 'prod' });
+
+      await deleteLedger.execute({ organizationId, name: 'main' });
+      const { ledgers, logs, events } = await readState(organizationId);
+
+      expect(ledgers).toHaveLength(1);
+      expect(ledgers[0]).toMatchObject({
+        id: ledger.id,
+        metadata: { env: 'prod' },
+        last_log_seq: '2',
+      });
+      expect(ledgers[0]?.deleted_at).toBeInstanceOf(Date);
+      expect(logs).toHaveLength(2);
+      expect(logs[1]).toMatchObject({
+        ledger_id: ledger.id,
+        seq: '2',
+        type: 'LEDGER_DELETED',
+        payload: { name: 'main' },
+      });
+      expect(events).toHaveLength(2);
+      expect(events[1]).toMatchObject({
+        ledger_id: ledger.id,
+        aggregate_type: 'ledger',
+        aggregate_id: ledger.id,
+        event_type: 'ledger.deleted',
+        event_version: 1,
+        published_at: null,
+        payload: {
+          ledgerId: ledger.id,
+          organizationId,
+          name: 'main',
+          deletedAt: ledgers[0]?.deleted_at?.toISOString(),
+        },
+      });
+    });
+
+    it('keeps the ledger row and every earlier log and event', async () => {
+      const organizationId = newOrganizationId();
+      await createMain(organizationId);
+      await saveMetadata.execute({ organizationId, name: 'main', metadata: { env: 'prod' } });
+
+      await deleteLedger.execute({ organizationId, name: 'main' });
+      const { ledgers, logs, events } = await readState(organizationId);
+
+      expect(ledgers).toHaveLength(1);
+      expect(logs.map((log) => log.type)).toEqual([
+        'LEDGER_CREATED',
+        'LEDGER_METADATA_SAVED',
+        'LEDGER_DELETED',
+      ]);
+      expect(events.map((event) => event.event_type)).toEqual([
+        'ledger.created',
+        'ledger.metadata.saved',
+        'ledger.deleted',
+      ]);
+    });
+
+    describe('afterwards', () => {
+      let organizationId: string;
+
+      beforeEach(async () => {
+        organizationId = newOrganizationId();
+        await createMain(organizationId);
+        await deleteLedger.execute({ organizationId, name: 'main' });
+      });
+
+      it('get throws LedgerNotFoundError', async () => {
+        await expect(getLedger.execute({ organizationId, name: 'main' })).rejects.toBeInstanceOf(
+          LedgerNotFoundError,
+        );
+      });
+
+      it('list leaves the ledger out', async () => {
+        const page = await listLedgers.execute({ organizationId, pageSize: 10 });
+
+        expect(page.ledgers).toEqual([]);
+        expect(page.hasMore).toBe(false);
+      });
+
+      it('saving metadata throws LedgerNotFoundError and writes nothing', async () => {
+        await expect(
+          saveMetadata.execute({ organizationId, name: 'main', metadata: { env: 'prod' } }),
+        ).rejects.toBeInstanceOf(LedgerNotFoundError);
+
+        const { logs, events } = await readState(organizationId);
+        expect([logs.length, events.length]).toEqual([2, 2]);
+      });
+
+      it('deleting a metadata key throws LedgerNotFoundError', async () => {
+        await expect(
+          deleteMetadata.execute({ organizationId, name: 'main', key: 'env' }),
+        ).rejects.toBeInstanceOf(LedgerNotFoundError);
+      });
+
+      it('deleting again throws LedgerNotFoundError and writes nothing', async () => {
+        await expect(deleteLedger.execute({ organizationId, name: 'main' })).rejects.toBeInstanceOf(
+          LedgerNotFoundError,
+        );
+
+        const { ledgers, logs, events } = await readState(organizationId);
+        expect([ledgers.length, logs.length, events.length]).toEqual([1, 2, 2]);
+      });
+
+      it('creating the same name again throws LedgerAlreadyExistsError, so the name stays reserved', async () => {
+        await expect(createMain(organizationId)).rejects.toBeInstanceOf(LedgerAlreadyExistsError);
+      });
+
+      it('lets another organization create a ledger with the same name', async () => {
+        await expect(createMain(newOrganizationId())).resolves.toMatchObject({ name: 'main' });
+      });
+    });
+
+    it('throws LedgerNotFoundError for a name the organization does not have', async () => {
+      await expect(
+        deleteLedger.execute({ organizationId: newOrganizationId(), name: 'unknown' }),
+      ).rejects.toBeInstanceOf(LedgerNotFoundError);
+    });
+
+    it('throws LedgerNotFoundError for the ledger of another organization, and does not delete it', async () => {
+      const owner = newOrganizationId();
+      await createMain(owner);
+
+      await expect(
+        deleteLedger.execute({ organizationId: newOrganizationId(), name: 'main' }),
+      ).rejects.toBeInstanceOf(LedgerNotFoundError);
+
+      const { ledgers, logs } = await readState(owner);
+      expect(ledgers[0]?.deleted_at).toBeNull();
+      expect(logs).toHaveLength(1);
+    });
+
+    it('lets only one of two deletes at the same time succeed, with one log and one event', async () => {
+      const organizationId = newOrganizationId();
+      await createMain(organizationId);
+
+      const results = await Promise.allSettled([
+        deleteLedger.execute({ organizationId, name: 'main' }),
+        deleteLedger.execute({ organizationId, name: 'main' }),
+      ]);
+
+      expect(results.map((result) => result.status).sort()).toEqual(['fulfilled', 'rejected']);
+      const rejected = results.find((result) => result.status === 'rejected');
+      expect(rejected?.reason).toBeInstanceOf(LedgerNotFoundError);
+      const { logs, events } = await readState(organizationId);
+      expect(logs.filter((log) => log.type === 'LEDGER_DELETED')).toHaveLength(1);
+      expect(events.filter((event) => event.event_type === 'ledger.deleted')).toHaveLength(1);
+    });
+
+    it('stops a writer that found the ledger before the delete and writes its log after it', async () => {
+      const organizationId = newOrganizationId();
+      const ledger = await createMain(organizationId);
+      const repository = app.get<ILedgerRepository>(LEDGER_REPOSITORY);
+      const logs = app.get<ILedgerLogWriter>(LEDGER_LOG_WRITER);
+
+      let proceed!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        proceed = resolve;
+      });
+      let found!: () => void;
+      const ledgerFound = new Promise<void>((resolve) => {
+        found = resolve;
+      });
+      // Like create transaction: a plain read without the lock, then the work.
+      const staleWriter = withTenant(db, organizationId, async (trx) => {
+        await repository.findByName(trx, 'main');
+        found();
+        await gate;
+        await logs.append(trx, { ledgerId: ledger.id, type: 'LEDGER_METADATA_SAVED', payload: {} });
+      });
+      await Promise.race([ledgerFound, staleWriter]);
+
+      await deleteLedger.execute({ organizationId, name: 'main' });
+      proceed();
+
+      await expect(staleWriter).rejects.toMatchObject({
+        code: 'P0001',
+        message: expect.stringContaining('ledger not found for log'),
+      });
+      const state = await readState(organizationId);
+      expect(state.logs.map((log) => log.type)).toEqual(['LEDGER_CREATED', 'LEDGER_DELETED']);
+    });
+  });
+
   describe('when a step fails after the ledger row was written', () => {
     let failingApp: INestApplication;
 
@@ -488,6 +687,22 @@ describe('LedgersModule (real database)', () => {
       const { ledgers, logs, events } = await readState(organizationId);
       expect(ledgers[0]).toMatchObject({ metadata: { env: 'prod' }, last_log_seq: '1' });
       expect([logs.length, events.length]).toEqual([1, 1]); // only the ones from create
+    });
+
+    it('rolls back a ledger delete, so the ledger stays live', async () => {
+      const organizationId = newOrganizationId();
+      await createLedger.execute({ organizationId, name: 'main', metadata: {} });
+
+      await expect(
+        failingApp.get(DeleteLedgerUseCase).execute({ organizationId, name: 'main' }),
+      ).rejects.toThrow('log write failed');
+
+      const { ledgers, logs, events } = await readState(organizationId);
+      expect(ledgers[0]).toMatchObject({ deleted_at: null, last_log_seq: '1' });
+      expect([logs.length, events.length]).toEqual([1, 1]); // only the ones from create
+      await expect(getLedger.execute({ organizationId, name: 'main' })).resolves.toMatchObject({
+        name: 'main',
+      });
     });
 
     it('rolls back a metadata delete, so the key stays', async () => {

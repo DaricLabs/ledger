@@ -140,6 +140,26 @@ describe('ledger_logs', () => {
       expect(await lastLogSeq(theirs.org, theirs.ledgerId)).toBe(0); // their counter is untouched
     });
 
+    it('refuses a log for a deleted ledger and leaves its counter as it was', async () => {
+      const { org, ledgerId } = await newLedger();
+      await inTenant(db, org, (trx) => insertLog(trx, org, ledgerId));
+      await inTenant(db, org, (trx) =>
+        trx
+          .updateTable('ledgers')
+          .set({ deleted_at: new Date() })
+          .where('id', '=', ledgerId)
+          .execute(),
+      );
+
+      await expect(inTenant(db, org, (trx) => insertLog(trx, org, ledgerId))).rejects.toMatchObject(
+        {
+          code: 'P0001',
+          message: expect.stringContaining('ledger not found for log'),
+        },
+      );
+      expect(await lastLogSeq(org, ledgerId)).toBe(1);
+    });
+
     it.each(['transaction_created', 'AB', 'TRANSACTION CREATED', `A${'B'.repeat(64)}`])(
       'rejects the type %j',
       async (type) => {
