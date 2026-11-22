@@ -16,6 +16,7 @@ import type { Response } from 'express';
 import { OrganizationId } from '../../../core/tenant/organization-id.decorator.js';
 import { TenantGuard } from '../../../core/tenant/tenant.guard.js';
 import { CreateLedgerUseCase } from '../../application/use-cases/create-ledger.use-case.js';
+import { DeleteLedgerUseCase } from '../../application/use-cases/delete-ledger.use-case.js';
 import { DeleteLedgerMetadataUseCase } from '../../application/use-cases/delete-ledger-metadata.use-case.js';
 import {
   metadataKeySchema,
@@ -56,6 +57,7 @@ export class LedgersController {
     private readonly listLedgers: ListLedgersUseCase,
     private readonly saveLedgerMetadata: SaveLedgerMetadataUseCase,
     private readonly deleteLedgerMetadata: DeleteLedgerMetadataUseCase,
+    private readonly deleteLedger: DeleteLedgerUseCase,
   ) {}
 
   /**
@@ -121,6 +123,29 @@ export class LedgersController {
   ): Promise<ILedgerResponse> {
     const ledger = await this.getLedger.execute({ organizationId, name });
     return toLedgerResponseDto(ledger);
+  }
+
+  /**
+   * Deletes a ledger of the organization of the `X-Organization-Id` header.
+   *
+   * The ledger is archived, not erased: its journal stays in storage. From now
+   * on every request for it answers `404 LEDGER_NOT_FOUND`, it is left out of
+   * the list, and its name cannot be used again (creating it gives `409
+   * LEDGER_ALREADY_EXISTS`). A ledger that still holds money can be deleted.
+   * There is no way to undo it.
+   *
+   * - `204`: the ledger is deleted.
+   * - `400`: `VALIDATION` (the name has a wrong shape).
+   * - `404`: `LEDGER_NOT_FOUND` (no such ledger in this organization, or it
+   *   was already deleted).
+   */
+  @Delete(':name')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async delete(
+    @OrganizationId() organizationId: string,
+    @Param('name', { schema: ledgerNameSchema }) name: string,
+  ): Promise<void> {
+    await this.deleteLedger.execute({ organizationId, name });
   }
 
   /**

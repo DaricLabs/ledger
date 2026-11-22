@@ -119,6 +119,10 @@ export interface LedgerLogs {
 
 export interface Ledgers {
   created_at: Generated<Timestamp>;
+  /**
+   * When the ledger was deleted, or NULL while it is live. Set once, never cleared. The name stays reserved.
+   */
+  deleted_at: Timestamp | null;
   id: string;
   last_log_seq: Generated<Int8>;
   metadata: Generated<Json>;

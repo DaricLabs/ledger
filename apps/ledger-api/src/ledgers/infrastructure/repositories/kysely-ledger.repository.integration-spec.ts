@@ -504,3 +504,228 @@ describe('KyselyLedgerRepository.findPage', () => {
     expect(namesOf(second)).toEqual(['e', 'f']);
   });
 });
+
+describe('KyselyLedgerRepository.markDeleted', () => {
+  const insertMain = async (organizationId: string, name = 'main') => {
+    const ledger = makeLedger(organizationId, name);
+    await withTenant(db, organizationId, (trx) => repository.insert(trx, ledger));
+    return ledger;
+  };
+
+  const readDeletedAt = (organizationId: string, id: string) =>
+    withTenant(db, organizationId, (trx) =>
+      unwrapTenantTransaction(trx)
+        .selectFrom('ledgers')
+        .select(['deleted_at', 'metadata', 'name'])
+        .where('id', '=', id)
+        .executeTakeFirstOrThrow(),
+    );
+
+  it('saves the time of the delete and changes nothing else', async () => {
+    const organizationId = ids.next();
+    const ledger = await insertMain(organizationId);
+    const deletedAt = new Date('2026-11-22T10:00:00.123Z');
+
+    await withTenant(db, organizationId, (trx) => repository.markDeleted(trx, ledger, deletedAt));
+
+    const row = await readDeletedAt(organizationId, ledger.id);
+    expect(row.deleted_at).toEqual(deletedAt);
+    expect(row.name).toBe('main');
+    expect(row.metadata).toEqual({});
+  });
+
+  it('does not change another ledger of the same organization', async () => {
+    const organizationId = ids.next();
+    const gone = await insertMain(organizationId, 'gone');
+    const kept = await insertMain(organizationId, 'kept');
+
+    await withTenant(db, organizationId, (trx) => repository.markDeleted(trx, gone, new Date()));
+
+    expect((await readDeletedAt(organizationId, kept.id)).deleted_at).toBeNull();
+  });
+
+  it('throws, and changes nothing, for a ledger of another organization', async () => {
+    const owner = ids.next();
+    const other = ids.next();
+    const ledger = await insertMain(owner);
+
+    await expect(
+      withTenant(db, other, (trx) => repository.markDeleted(trx, ledger, new Date())),
+    ).rejects.toThrow('Expected to delete 1 ledger row, but updated 0');
+
+    expect((await readDeletedAt(owner, ledger.id)).deleted_at).toBeNull();
+  });
+
+  it('throws for a ledger that was never saved', async () => {
+    const organizationId = ids.next();
+
+    await expect(
+      withTenant(db, organizationId, (trx) =>
+        repository.markDeleted(trx, makeLedger(organizationId, 'ghost'), new Date()),
+      ),
+    ).rejects.toThrow('Expected to delete 1 ledger row, but updated 0');
+  });
+
+  it('throws when the ledger is already deleted, and keeps the first time', async () => {
+    const organizationId = ids.next();
+    const ledger = await insertMain(organizationId);
+    const first = new Date('2026-11-22T10:00:00.000Z');
+    await withTenant(db, organizationId, (trx) => repository.markDeleted(trx, ledger, first));
+
+    await expect(
+      withTenant(db, organizationId, (trx) =>
+        repository.markDeleted(trx, ledger, new Date('2026-11-23T10:00:00.000Z')),
+      ),
+    ).rejects.toThrow('Expected to delete 1 ledger row, but updated 0');
+
+    expect((await readDeletedAt(organizationId, ledger.id)).deleted_at).toEqual(first);
+  });
+
+  it('rolls back with the transaction, so the ledger stays live', async () => {
+    const organizationId = ids.next();
+    const ledger = await insertMain(organizationId);
+
+    await expect(
+      withTenant(db, organizationId, async (trx) => {
+        await repository.markDeleted(trx, ledger, new Date());
+        throw new Error('later step failed');
+      }),
+    ).rejects.toThrow('later step failed');
+
+    expect((await readDeletedAt(organizationId, ledger.id)).deleted_at).toBeNull();
+    const found = await withTenant(db, organizationId, (trx) => repository.findByName(trx, 'main'));
+    expect(found?.id).toBe(ledger.id);
+  });
+});
+
+describe('KyselyLedgerRepository with a deleted ledger', () => {
+  /** Saves a ledger and deletes it, in two steps like the app. */
+  const insertDeleted = async (organizationId: string, name: string) => {
+    const ledger = makeLedger(organizationId, name);
+    await withTenant(db, organizationId, (trx) => repository.insert(trx, ledger));
+    await withTenant(db, organizationId, (trx) => repository.markDeleted(trx, ledger, new Date()));
+    return ledger;
+  };
+
+  it('findByName returns null', async () => {
+    const organizationId = ids.next();
+    await insertDeleted(organizationId, 'main');
+
+    const found = await withTenant(db, organizationId, (trx) => repository.findByName(trx, 'main'));
+
+    expect(found).toBeNull();
+  });
+
+  it('findByNameForUpdate returns null', async () => {
+    const organizationId = ids.next();
+    await insertDeleted(organizationId, 'main');
+
+    const found = await withTenant(db, organizationId, (trx) =>
+      repository.findByNameForUpdate(trx, 'main'),
+    );
+
+    expect(found).toBeNull();
+  });
+
+  it('findPage leaves it out and still finds the others', async () => {
+    const organizationId = ids.next();
+    await insertDeleted(organizationId, 'b-gone');
+    await withTenant(db, organizationId, async (trx) => {
+      await repository.insert(trx, makeLedger(organizationId, 'a-live'));
+      await repository.insert(trx, makeLedger(organizationId, 'c-live'));
+    });
+
+    const page = await withTenant(db, organizationId, (trx) =>
+      repository.findPage(trx, { limit: 10 }),
+    );
+
+    expect(page.ledgers.map((ledger) => ledger.name)).toEqual(['a-live', 'c-live']);
+    expect(page.hasMore).toBe(false);
+  });
+
+  it('findPage counts only live ledgers for hasMore and for the page size', async () => {
+    const organizationId = ids.next();
+    await withTenant(db, organizationId, (trx) =>
+      repository.insert(trx, makeLedger(organizationId, 'a-live')),
+    );
+    await insertDeleted(organizationId, 'b-gone');
+
+    const page = await withTenant(db, organizationId, (trx) =>
+      repository.findPage(trx, { limit: 1 }),
+    );
+
+    expect(page.ledgers.map((ledger) => ledger.name)).toEqual(['a-live']);
+    expect(page.hasMore).toBe(false); // the deleted one must not make a next page
+  });
+
+  it('findPage accepts the name of a deleted ledger as the position', async () => {
+    const organizationId = ids.next();
+    await withTenant(db, organizationId, (trx) =>
+      repository.insert(trx, makeLedger(organizationId, 'a-live')),
+    );
+    await insertDeleted(organizationId, 'b-gone');
+    await withTenant(db, organizationId, (trx) =>
+      repository.insert(trx, makeLedger(organizationId, 'c-live')),
+    );
+
+    const page = await withTenant(db, organizationId, (trx) =>
+      repository.findPage(trx, { limit: 10, afterName: 'b-gone' }),
+    );
+
+    expect(page.ledgers.map((ledger) => ledger.name)).toEqual(['c-live']);
+  });
+
+  it('insert still says the name exists, so it can never be used again', async () => {
+    const organizationId = ids.next();
+    await insertDeleted(organizationId, 'main');
+
+    await expect(
+      withTenant(db, organizationId, (trx) =>
+        repository.insert(trx, makeLedger(organizationId, 'main')),
+      ),
+    ).rejects.toBeInstanceOf(LedgerAlreadyExistsError);
+  });
+
+  it('insert lets another organization use the name of a deleted ledger', async () => {
+    const owner = ids.next();
+    const other = ids.next();
+    await insertDeleted(owner, 'main');
+
+    await withTenant(db, other, (trx) => repository.insert(trx, makeLedger(other, 'main')));
+
+    const found = await withTenant(db, other, (trx) => repository.findByName(trx, 'main'));
+    expect(found?.name).toBe('main');
+  });
+
+  it('a locking read that waits for a delete returns null when the delete commits', async () => {
+    const organizationId = ids.next();
+    const ledger = makeLedger(organizationId, 'main');
+    await withTenant(db, organizationId, (trx) => repository.insert(trx, ledger));
+
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let locked!: () => void;
+    const lockTaken = new Promise<void>((resolve) => {
+      locked = resolve;
+    });
+    const deleting = withTenant(db, organizationId, async (trx) => {
+      await repository.findByNameForUpdate(trx, 'main');
+      await repository.markDeleted(trx, ledger, new Date());
+      locked();
+      await released; // the delete is not committed yet, and it holds the lock
+    });
+    await Promise.race([lockTaken, deleting]);
+
+    const waiting = withTenant(db, organizationId, (trx) =>
+      repository.findByNameForUpdate(trx, 'main'),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 150)); // let it reach the lock
+    release();
+    await deleting;
+
+    // Row-level re-check: the row it waited for no longer matches, so it is "not found".
+    await expect(waiting).resolves.toBeNull();
+  });
+});

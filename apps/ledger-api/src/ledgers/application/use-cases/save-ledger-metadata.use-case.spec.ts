@@ -45,6 +45,7 @@ function setup() {
     updateMetadata: vi.fn<ILedgerRepository['updateMetadata']>(async () => {
       calls.push('update');
     }),
+    markDeleted: vi.fn<ILedgerRepository['markDeleted']>(),
     findPage: vi.fn<ILedgerRepository['findPage']>(),
   };
   const logs = {

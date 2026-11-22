@@ -40,6 +40,7 @@ function setup() {
     findByName: vi.fn<ILedgerRepository['findByName']>(),
     findByNameForUpdate: vi.fn<ILedgerRepository['findByNameForUpdate']>(),
     updateMetadata: vi.fn<ILedgerRepository['updateMetadata']>(),
+    markDeleted: vi.fn<ILedgerRepository['markDeleted']>(),
     findPage: vi.fn<ILedgerRepository['findPage']>(async () => {
       calls.push('find');
       return storedPage;

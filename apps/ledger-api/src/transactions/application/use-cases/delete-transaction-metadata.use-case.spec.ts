@@ -66,6 +66,7 @@ function setup(transaction: Transaction | null = stored({ orderId: '42', note: '
     }),
     findByNameForUpdate: vi.fn<ILedgerRepository['findByNameForUpdate']>(),
     updateMetadata: vi.fn<ILedgerRepository['updateMetadata']>(),
+    markDeleted: vi.fn<ILedgerRepository['markDeleted']>(),
     findPage: vi.fn<ILedgerRepository['findPage']>(),
   };
   const transactionRepository = {

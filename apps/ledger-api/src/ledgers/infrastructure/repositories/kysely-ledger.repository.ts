@@ -48,6 +48,7 @@ export class KyselyLedgerRepository implements ILedgerRepository {
       .selectFrom('ledgers')
       .select(LEDGER_COLUMNS)
       .where('name', '=', name)
+      .where('deleted_at', 'is', null)
       .executeTakeFirst();
 
     return row === undefined ? null : toLedger(row);
@@ -62,6 +63,7 @@ export class KyselyLedgerRepository implements ILedgerRepository {
       .selectFrom('ledgers')
       .select(LEDGER_COLUMNS)
       .where('name', '=', name)
+      .where('deleted_at', 'is', null)
       .forNoKeyUpdate()
       .executeTakeFirst();
 
@@ -85,11 +87,29 @@ export class KyselyLedgerRepository implements ILedgerRepository {
     }
   }
 
+  async markDeleted(trx: TenantTransaction, ledger: Ledger, deletedAt: Date): Promise<void> {
+    // Only `deleted_at` is written, and only on a live row. The database also
+    // refuses any later change to a deleted ledger.
+    const result = await unwrapTenantTransaction(trx)
+      .updateTable('ledgers')
+      .set({ deleted_at: deletedAt })
+      .where('id', '=', ledger.id)
+      .where('deleted_at', 'is', null)
+      .executeTakeFirstOrThrow();
+
+    // Same reason as in `updateMetadata`: row-level security makes a wrong
+    // organization look like 0 rows, so do not let that pass quietly.
+    if (result.numUpdatedRows !== 1n) {
+      throw new Error(`Expected to delete 1 ledger row, but updated ${result.numUpdatedRows}`);
+    }
+  }
+
   async findPage(trx: TenantTransaction, query: ILedgerPageQuery): Promise<ILedgerPage> {
     // No `organization_id` filter here either (see `findByName`).
     let select = unwrapTenantTransaction(trx)
       .selectFrom('ledgers')
       .select(LEDGER_COLUMNS)
+      .where('deleted_at', 'is', null)
       .orderBy('name');
     if (query.afterName !== undefined) {
       select = select.where('name', '>', query.afterName);

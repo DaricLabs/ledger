@@ -64,6 +64,7 @@ function setup() {
     }),
     findByNameForUpdate: vi.fn<ILedgerRepository['findByNameForUpdate']>(),
     updateMetadata: vi.fn<ILedgerRepository['updateMetadata']>(),
+    markDeleted: vi.fn<ILedgerRepository['markDeleted']>(),
     findPage: vi.fn<ILedgerRepository['findPage']>(),
   };
   const transactionRepository = {

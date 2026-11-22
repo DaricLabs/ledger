@@ -3,6 +3,7 @@ import { IdsModule } from '../ids/ids.module.js';
 import { JournalModule } from '../journal/journal.module.js';
 import { LEDGER_REPOSITORY } from './application/ports/ledger-repository.port.js';
 import { CreateLedgerUseCase } from './application/use-cases/create-ledger.use-case.js';
+import { DeleteLedgerUseCase } from './application/use-cases/delete-ledger.use-case.js';
 import { DeleteLedgerMetadataUseCase } from './application/use-cases/delete-ledger-metadata.use-case.js';
 import { GetLedgerUseCase } from './application/use-cases/get-ledger.use-case.js';
 import { ListLedgersUseCase } from './application/use-cases/list-ledgers.use-case.js';
@@ -20,6 +21,7 @@ import { LedgersController } from './presentation/controllers/ledgers.controller
     ListLedgersUseCase,
     SaveLedgerMetadataUseCase,
     DeleteLedgerMetadataUseCase,
+    DeleteLedgerUseCase,
   ],
   exports: [
     // Other features that work inside a ledger (like transactions) find it by name.
@@ -29,6 +31,7 @@ import { LedgersController } from './presentation/controllers/ledgers.controller
     ListLedgersUseCase,
     SaveLedgerMetadataUseCase,
     DeleteLedgerMetadataUseCase,
+    DeleteLedgerUseCase,
   ],
 })
 export class LedgersModule {}

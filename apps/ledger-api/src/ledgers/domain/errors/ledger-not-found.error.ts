@@ -3,7 +3,10 @@ import { LedgerDomainError } from './ledger-domain.error.js';
 /**
  * The organization has no ledger with this name.
  *
- * It also covers a ledger of another organization: row-level security hides
+ * It also covers a ledger that was deleted: from the outside it is gone, even
+ * though its name stays taken.
+ *
+ * And it covers a ledger of another organization: row-level security hides
  * those rows, so from the caller's side the ledger does not exist. This is on
  * purpose, so a caller cannot find out which names other organizations use.
  *
