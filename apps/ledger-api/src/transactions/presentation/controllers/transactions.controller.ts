@@ -48,8 +48,8 @@ import { transactionIdSchema } from '../dto/transaction-id.dto.js';
 import {
   toTransactionPageResponseDto,
   toTransactionResponseDto,
-  type ITransactionPageResponse,
-  type ITransactionResponse,
+  type TransactionPageResponseDto,
+  type TransactionResponseDto,
 } from '../dto/transaction-response.dto.js';
 import { TransactionExceptionFilter } from '../filters/transaction-exception.filter.js';
 
@@ -137,7 +137,7 @@ export class TransactionsController {
     @IdempotencyKey() idempotencyKey: string | undefined,
     @Body({ schema: createTransactionSchema }) body: CreateTransactionDto,
     @Res({ passthrough: true }) response: Response,
-  ): Promise<ITransactionResponse> {
+  ): Promise<TransactionResponseDto> {
     const { transaction, replayed } = await this.createTransaction.execute({
       organizationId,
       ledgerName,
@@ -176,7 +176,7 @@ export class TransactionsController {
     @OrganizationId() organizationId: string,
     @Param('ledgerName', { schema: ledgerNameSchema }) ledgerName: string,
     @Query({ schema: listTransactionsQuerySchema }) query: ListTransactionsQueryDto,
-  ): Promise<ITransactionPageResponse> {
+  ): Promise<TransactionPageResponseDto> {
     const page = await this.listTransactions.execute({
       organizationId,
       ledgerName,
@@ -201,7 +201,7 @@ export class TransactionsController {
     @OrganizationId() organizationId: string,
     @Param('ledgerName', { schema: ledgerNameSchema }) ledgerName: string,
     @Param('transactionId', { schema: transactionIdSchema }) transactionId: string,
-  ): Promise<ITransactionResponse> {
+  ): Promise<TransactionResponseDto> {
     const transaction = await this.getTransaction.execute({
       organizationId,
       ledgerName,
@@ -259,7 +259,7 @@ export class TransactionsController {
     @IdempotencyKey() idempotencyKey: string | undefined,
     @Body({ schema: revertTransactionSchema }) body: RevertTransactionDto,
     @Res({ passthrough: true }) response: Response,
-  ): Promise<ITransactionResponse> {
+  ): Promise<TransactionResponseDto> {
     const { transaction, replayed } = await this.revertTransaction.execute({
       organizationId,
       ledgerName,

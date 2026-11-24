@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 /** The characters of base64url. Node's decoder would silently skip anything else. */
-const CURSOR_PATTERN = /^[A-Za-z0-9_-]+$/;
+export const CURSOR_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 /**
  * The longest cursor we read. A cursor is a small JSON object, so this is

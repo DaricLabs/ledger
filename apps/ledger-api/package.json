@@ -19,7 +19,8 @@
     "test:debug": "vitest --inspect-brk --no-file-parallelism",
     "test:e2e": "vitest run --config ./vitest.config.e2e.ts",
     "test:integration": "vitest run --config ./vitest.config.integration.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "openapi:generate": "nest build && node dist/openapi/generate-openapi.script.js"
   },
   "dependencies": {
     "@ledger/database": "workspace:*",
@@ -38,6 +39,7 @@
     "@nestjs/cli": "^12.0.0",
     "@nestjs/schematics": "^12.0.0",
     "@nestjs/testing": "^12.0.1",
+    "@seriousme/openapi-schema-validator": "^2.12.0",
     "@types/express": "^5.0.0",
     "@types/node": "^24.19.2",
     "@types/supertest": "^7.2.1",

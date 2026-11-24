@@ -1,41 +1,50 @@
-import type { MetadataEntries, Money } from '@ledger/domain';
+import type { Money } from '@ledger/domain';
+import { z } from 'zod';
+import { pageResponseSchema } from '../../../core/pagination/page-response.dto.js';
+import { isoDateTimeSchema } from '../../../core/validation/iso-date-time.dto.js';
+import { metadataSchema } from '../../../core/validation/metadata.dto.js';
 import type { IAccountPage } from '../../application/ports/account-repository.port.js';
 import type { Account } from '../../domain/entities/account.entity.js';
+import { accountAddressSchema } from './account-address.dto.js';
 import { encodeAccountCursor } from './account-page-cursor.dto.js';
 
 /** What an account holds in one asset. Field names are part of the public API. */
-export interface IBalanceResponse {
-  asset: string;
-  /**
-   * A string of digits in the smallest unit of the asset, like `"1050"`, with
-   * a leading `-` when it is below zero (only an account that may go below
-   * zero, like `world`, can be).
-   */
-  amount: string;
-}
+export const balanceResponseSchema = z.object({
+  asset: z.string().meta({
+    description: 'Code of the asset.',
+    examples: ['USD'],
+  }),
+  amount: z.string().meta({
+    description:
+      'A string of digits in the smallest unit of the asset, like `"1050"`, with a leading ' +
+      '`-` when it is below zero (only an account that may go below zero, like `world`, can be).',
+    examples: ['1050', '-2500'],
+  }),
+});
 
 /**
  * An account as clients see it. Field names are part of the public API.
  * `organizationId` and `ledgerId` are not included: the caller already knows
  * them from the header and the URL.
  */
-export interface IAccountResponse {
-  address: string;
-  /** `true` when the account may go below zero. */
-  allowOverdraft: boolean;
-  /** One entry for each asset the account has held, in the order of the asset codes. */
-  balances: IBalanceResponse[];
-  /** The key/value pairs of the caller. An empty object when there are none. */
-  metadata: MetadataEntries;
-  /** When the ledger first saw the account. ISO 8601 date in UTC, like `2026-11-09T10:00:00.000Z`. */
-  createdAt: string;
-}
+export const accountResponseSchema = z.object({
+  address: accountAddressSchema,
+  allowOverdraft: z.boolean().meta({ description: '`true` when the account may go below zero.' }),
+  balances: z.array(balanceResponseSchema).meta({
+    description: 'One entry for each asset the account has held, in the order of the asset codes.',
+  }),
+  metadata: metadataSchema,
+  createdAt: isoDateTimeSchema.meta({ description: 'When the ledger first saw the account.' }),
+});
 
-function toBalanceResponseDto(balance: Money): IBalanceResponse {
+export type BalanceResponseDto = z.infer<typeof balanceResponseSchema>;
+export type AccountResponseDto = z.infer<typeof accountResponseSchema>;
+
+function toBalanceResponseDto(balance: Money): BalanceResponseDto {
   return { asset: balance.asset.value, amount: balance.amount.toString() };
 }
 
-export function toAccountResponseDto(account: Account): IAccountResponse {
+export function toAccountResponseDto(account: Account): AccountResponseDto {
   return {
     address: account.address.value,
     allowOverdraft: account.allowOverdraft,
@@ -46,16 +55,14 @@ export function toAccountResponseDto(account: Account): IAccountResponse {
 }
 
 /** One page of `GET /ledgers/:ledgerName/accounts`. Field names are part of the public API. */
-export interface IAccountPageResponse {
-  /** The accounts of this page, sorted by address. */
-  data: IAccountResponse[];
-  /** `true` when there is a next page. */
-  hasMore: boolean;
-  /** The `cursor` that gets the next page. It is there only when `hasMore` is `true`. */
-  next?: string;
-}
+export const accountPageResponseSchema = pageResponseSchema(
+  accountResponseSchema,
+  'sorted by address',
+);
 
-export function toAccountPageResponseDto(page: IAccountPage): IAccountPageResponse {
+export type AccountPageResponseDto = z.infer<typeof accountPageResponseSchema>;
+
+export function toAccountPageResponseDto(page: IAccountPage): AccountPageResponseDto {
   const last = page.accounts.at(-1);
   return {
     data: page.accounts.map(toAccountResponseDto),

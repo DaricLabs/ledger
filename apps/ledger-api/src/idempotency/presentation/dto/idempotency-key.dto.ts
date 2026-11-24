@@ -6,6 +6,12 @@ import { IDEMPOTENCY_KEY_PATTERN } from '../../domain/constants/idempotency-key.
  * A key with another shape is a `VALIDATION` error (400), so the database never
  * has to refuse it.
  */
-export const idempotencyKeySchema = z.string().regex(IDEMPOTENCY_KEY_PATTERN, {
-  error: 'Must be 1 to 255 printable ASCII characters',
-});
+export const idempotencyKeySchema = z
+  .string()
+  .regex(IDEMPOTENCY_KEY_PATTERN, {
+    error: 'Must be 1 to 255 printable ASCII characters',
+  })
+  .meta({
+    description: '1 to 255 printable ASCII characters. A random UUID works well.',
+    examples: ['4f6c1c3a-8f0e-4a43-9d7b-1b0f3c2d5e61'],
+  });

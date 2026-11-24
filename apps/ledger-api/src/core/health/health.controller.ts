@@ -1,4 +1,5 @@
 import { Controller, Get } from '@nestjs/common';
+import type { HealthResponseDto } from './health-response.dto.js';
 
 @Controller('health')
 export class HealthController {
@@ -8,7 +9,7 @@ export class HealthController {
    * does not make an orchestrator restart a healthy process.
    */
   @Get()
-  check(): { status: 'ok' } {
+  check(): HealthResponseDto {
     return { status: 'ok' };
   }
 }

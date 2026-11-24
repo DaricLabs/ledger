@@ -1,0 +1,1657 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Daric Ledger API",
+    "version": "0.0.0",
+    "description": "A double-entry ledger: ledgers, accounts and transactions that move money between accounts, with an append-only journal.\n\nEvery request, except `/health`, carries the `X-Organization-Id` header. All amounts are strings of digits in the smallest unit of the asset."
+  },
+  "tags": [
+    {
+      "name": "Ledgers",
+      "description": "A ledger is a separate book of accounts and transactions, with its own history. An organization can have many ledgers."
+    },
+    {
+      "name": "Transactions",
+      "description": "A transaction moves money between accounts, all postings or none. It never changes after it is made, except that it can be reverted and its metadata edited."
+    },
+    {
+      "name": "Accounts",
+      "description": "An account holds money in one or more assets. There are no accounts to create: an account exists once money has moved through it."
+    },
+    {
+      "name": "Health",
+      "description": "For the orchestrator, not for the clients of the ledger."
+    }
+  ],
+  "paths": {
+    "/ledgers": {
+      "post": {
+        "tags": [
+          "Ledgers"
+        ],
+        "summary": "Create a ledger",
+        "description": "Creates a ledger in the organization of the `X-Organization-Id` header. The name is unique in the organization, and a name is never free again: even after the ledger is deleted, it cannot be used a second time.",
+        "operationId": "createLedger",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OrganizationId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateLedgerRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The ledger was created.",
+            "headers": {
+              "Location": {
+                "$ref": "#/components/headers/Location"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ledger"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is wrong.\n\n- `VALIDATION`: the shape is wrong. `details` says which fields.\n- `INVALID_LEDGER_NAME`: the name is reserved.\n- `INVALID_METADATA`: the metadata is not valid.\n- `METADATA_LIMIT_EXCEEDED`: the ledger would have too many keys, or a key, a value or the total would be too big.\n- `INVALID_REQUEST`: the `X-Organization-Id` header is missing or is not a UUIDv7, or the body is not valid JSON.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The name is taken.\n\n- `LEDGER_ALREADY_EXISTS`: the organization already uses this name.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Ledgers"
+        ],
+        "summary": "List ledgers",
+        "description": "Lists the ledgers of the organization of the `X-Organization-Id` header, sorted by name, one page at a time. A deleted ledger is not listed.\n\nTo read all pages, call again with `cursor` set to the `next` of the last response, until `hasMore` is `false`.",
+        "operationId": "listLedgers",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OrganizationId"
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page. It is empty when the organization has no ledgers.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is wrong.\n\n- `VALIDATION`: `pageSize` is not a whole number from 1 to 100, the `cursor` is not one we gave, or a query parameter is unknown.\n- `INVALID_REQUEST`: the `X-Organization-Id` header is missing or is not a UUIDv7.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ledgers/{name}": {
+      "get": {
+        "tags": [
+          "Ledgers"
+        ],
+        "summary": "Get a ledger",
+        "description": "Gets a ledger of the organization of the `X-Organization-Id` header, by name.",
+        "operationId": "getLedger",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OrganizationId"
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "The name of the ledger.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/LedgerName"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The ledger.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ledger"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is wrong.\n\n- `VALIDATION`: the name has a wrong shape.\n- `INVALID_REQUEST`: the `X-Organization-Id` header is missing or is not a UUIDv7.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "There is no such ledger.\n\n- `LEDGER_NOT_FOUND`: no such ledger in this organization.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Ledgers"
+        ],
+        "summary": "Delete a ledger",
+        "description": "Deletes a ledger of the organization of the `X-Organization-Id` header.\n\nThe ledger is archived, not erased: its journal stays in storage. From now on every request for it answers `404 LEDGER_NOT_FOUND`, it is left out of the list, and its name cannot be used again (creating it gives `409 LEDGER_ALREADY_EXISTS`). A ledger that still holds money can be deleted. **There is no way to undo it.**",
+        "operationId": "deleteLedger",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OrganizationId"
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "The name of the ledger.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/LedgerName"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The ledger is deleted."
+          },
+          "400": {
+            "description": "The request is wrong.\n\n- `VALIDATION`: the name has a wrong shape.\n- `INVALID_REQUEST`: the `X-Organization-Id` header is missing or is not a UUIDv7.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "There is no such ledger.\n\n- `LEDGER_NOT_FOUND`: no such ledger in this organization, or it was already deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ledgers/{name}/metadata": {
+      "post": {
+        "tags": [
+          "Ledgers"
+        ],
+        "summary": "Add metadata to a ledger",
+        "description": "Adds metadata entries to a ledger of the organization of the `X-Organization-Id` header. The body is a plain object, like `{ \"env\": \"prod\" }`. A key that is already there gets the new value, and the other keys stay as they are.\n\nIt is safe to repeat: the same body gives the same result.",
+        "operationId": "saveLedgerMetadata",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OrganizationId"
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "The name of the ledger.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/LedgerName"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveMetadataRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "The metadata is saved (or was already like this)."
+          },
+          "400": {
+            "description": "The request is wrong.\n\n- `VALIDATION`: the name has a wrong shape, the body is not an object of strings, a key is empty, or there is no key at all.\n- `METADATA_LIMIT_EXCEEDED`: the ledger would have too many keys, or a key, a value or the total would be too big.\n- `INVALID_REQUEST`: the `X-Organization-Id` header is missing or is not a UUIDv7, or the body is not valid JSON.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "There is no such ledger.\n\n- `LEDGER_NOT_FOUND`: no such ledger in this organization.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ledgers/{name}/metadata/{key}": {
+      "delete": {
+        "tags": [
+          "Ledgers"
+        ],
+        "summary": "Remove a metadata key from a ledger",
+        "description": "Removes one metadata key from a ledger of the organization of the `X-Organization-Id` header.\n\nIt is safe to repeat: a key that is not there is not an error.",
+        "operationId": "deleteLedgerMetadata",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OrganizationId"
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "The name of the ledger.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/LedgerName"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/MetadataKey"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The key is gone (or was never there)."
+          },
+          "400": {
+            "description": "The request is wrong.\n\n- `VALIDATION`: the name has a wrong shape.\n- `INVALID_REQUEST`: the `X-Organization-Id` header is missing or is not a UUIDv7.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "There is no such ledger.\n\n- `LEDGER_NOT_FOUND`: no such ledger in this organization.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ledgers/{ledgerName}/transactions": {
+      "post": {
+        "tags": [
+          "Transactions"
+        ],
+        "summary": "Create a transaction",
+        "description": "Creates a transaction in a ledger of the organization of the `X-Organization-Id` header: moves money between accounts, all postings or none. Accounts that do not exist yet are created. Only `world` may go below zero.\n\nPostings are applied in order, and each one is checked when it is applied. A transaction that takes money out of an account before the money comes in fails, even if the account would end above zero.\n\n`metadata` is saved with the transaction and can be edited later. It is part of the request: a repeat with the same `Idempotency-Key` answers with the metadata of the first call, even if it was edited since.",
+        "operationId": "createTransaction",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OrganizationId"
+          },
+          {
+            "name": "ledgerName",
+            "in": "path",
+            "description": "The name of the ledger.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/LedgerName"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTransactionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The transaction was created. With `Idempotent-Replayed: true`, it was created by an earlier call with the same `Idempotency-Key`, and nothing ran this time.",
+            "headers": {
+              "Location": {
+                "$ref": "#/components/headers/Location"
+              },
+              "Idempotent-Replayed": {
+                "$ref": "#/components/headers/IdempotentReplayed"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Transaction"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is wrong.\n\n- `VALIDATION`: the shape is wrong: a missing or unknown field, a bad address, asset code or amount, no postings or more than 100, bad metadata, or a bad `Idempotency-Key`.\n- `INVALID_POSTING`: a posting has the same source and destination.\n- `INVALID_TRANSACTION`: the transaction has no postings or too many, or its reference has a wrong length.\n- `MONEY_AMOUNT_OUT_OF_RANGE`: an account would hold more than the biggest amount, which has 78 digits.\n- `METADATA_LIMIT_EXCEEDED`: a key, a value or the metadata is too big, or it has too many keys.\n- `INVALID_REQUEST`: the `X-Organization-Id` header is missing or is not a UUIDv7, or the body is not valid JSON.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "There is no such ledger.\n\n- `LEDGER_NOT_FOUND`: no such ledger in this organization.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The reference is taken.\n\n- `TRANSACTION_REFERENCE_ALREADY_EXISTS`: the ledger already has a transaction with this reference.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request is well formed, but it cannot be done.\n\n- `INSUFFICIENT_FUNDS`: an account does not have enough money.\n- `IDEMPOTENCY_KEY_REUSED`: the `Idempotency-Key` was used for a different request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Transactions"
+        ],
+        "summary": "List transactions",
+        "description": "Lists the transactions of a ledger of the organization of the `X-Organization-Id` header, one page at a time, newest first (by `postedAt`, and by `id` when two have the same `postedAt`). Each one has the same shape as the response of the create call.\n\nTo read all pages, call again with `cursor` set to the `next` of the last response, until `hasMore` is `false`. New transactions are always newer, so they never move the pages that follow a cursor.",
+        "operationId": "listTransactions",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OrganizationId"
+          },
+          {
+            "name": "ledgerName",
+            "in": "path",
+            "description": "The name of the ledger.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/LedgerName"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page. It is empty when the ledger has no transactions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransactionPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is wrong.\n\n- `VALIDATION`: the ledger name has a wrong shape, `pageSize` is not a whole number from 1 to 100, the `cursor` is not one we gave, or a query parameter is unknown.\n- `INVALID_REQUEST`: the `X-Organization-Id` header is missing or is not a UUIDv7.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "There is no such ledger.\n\n- `LEDGER_NOT_FOUND`: no such ledger in this organization.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ledgers/{ledgerName}/transactions/{transactionId}": {
+      "get": {
+        "tags": [
+          "Transactions"
+        ],
+        "summary": "Get a transaction",
+        "description": "Gets a transaction of a ledger of the organization of the `X-Organization-Id` header, by its id.",
+        "operationId": "getTransaction",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OrganizationId"
+          },
+          {
+            "name": "ledgerName",
+            "in": "path",
+            "description": "The name of the ledger.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/LedgerName"
+            }
+          },
+          {
+            "name": "transactionId",
+            "in": "path",
+            "description": "The id of the transaction.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/TransactionId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The transaction.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Transaction"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is wrong.\n\n- `VALIDATION`: the ledger name or the id has a wrong shape.\n- `INVALID_REQUEST`: the `X-Organization-Id` header is missing or is not a UUIDv7.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "There is no such ledger or transaction.\n\n- `LEDGER_NOT_FOUND`: no such ledger in this organization.\n- `TRANSACTION_NOT_FOUND`: no such transaction in this ledger.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ledgers/{ledgerName}/transactions/{transactionId}/revert": {
+      "post": {
+        "tags": [
+          "Transactions"
+        ],
+        "summary": "Revert a transaction",
+        "description": "Reverts a transaction of a ledger of the organization of the `X-Organization-Id` header: makes a new transaction that moves the same money back (every posting goes the other way, in the opposite order), and marks the old one as reverted. The old transaction is not changed otherwise.\n\nThe body is optional. `metadata` is saved with the NEW transaction (a `reason`, for example). The metadata of the old transaction is not copied.\n\nThe response is the NEW transaction. Its `Location` header is its URL. It has no reference, and `postedAt` is the time of the revert. The old transaction now shows `revertedAt` and `revertedByTransactionId`.\n\nThe money must still be there. If an account spent it after the original transaction, the revert fails with `INSUFFICIENT_FUNDS`, and nothing is forced: an account never goes below zero (only `world` may).\n\nWithout an `Idempotency-Key`, a second revert of the same transaction is refused with `TRANSACTION_ALREADY_REVERTED`.",
+        "operationId": "revertTransaction",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OrganizationId"
+          },
+          {
+            "name": "ledgerName",
+            "in": "path",
+            "description": "The name of the ledger.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/LedgerName"
+            }
+          },
+          {
+            "name": "transactionId",
+            "in": "path",
+            "description": "The id of the transaction.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/TransactionId"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevertTransactionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The transaction was reverted. With `Idempotent-Replayed: true`, it was reverted by an earlier call with the same `Idempotency-Key`, and nothing ran this time. The body is the new transaction.",
+            "headers": {
+              "Location": {
+                "$ref": "#/components/headers/Location"
+              },
+              "Idempotent-Replayed": {
+                "$ref": "#/components/headers/IdempotentReplayed"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Transaction"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is wrong.\n\n- `VALIDATION`: the ledger name or the id has a wrong shape, the body has an unknown field or bad metadata, or the `Idempotency-Key` is bad.\n- `MONEY_AMOUNT_OUT_OF_RANGE`: an account would hold more than the biggest amount, which has 78 digits.\n- `METADATA_LIMIT_EXCEEDED`: a key, a value or the metadata is too big, or it has too many keys.\n- `INVALID_REQUEST`: the `X-Organization-Id` header is missing or is not a UUIDv7, or the body is not valid JSON.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "There is no such ledger or transaction.\n\n- `LEDGER_NOT_FOUND`: no such ledger in this organization.\n- `TRANSACTION_NOT_FOUND`: no such transaction in this ledger.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The transaction is already reverted.\n\n- `TRANSACTION_ALREADY_REVERTED`: the transaction was reverted before.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request is well formed, but it cannot be done.\n\n- `INSUFFICIENT_FUNDS`: an account does not have the money to give back.\n- `IDEMPOTENCY_KEY_REUSED`: the `Idempotency-Key` was used for a different request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ledgers/{ledgerName}/transactions/{transactionId}/metadata": {
+      "post": {
+        "tags": [
+          "Transactions"
+        ],
+        "summary": "Add metadata to a transaction",
+        "description": "Adds metadata entries to a transaction of a ledger of the organization of the `X-Organization-Id` header. The body is a plain object, like `{ \"orderId\": \"42\" }`. A key that is already there gets the new value, and the other keys stay as they are. The postings never change. It also works on a reverted transaction.\n\nIt is safe to repeat: the same body gives the same result. Every real change leaves an entry in the journal, and a repeat that changes nothing leaves none.",
+        "operationId": "saveTransactionMetadata",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OrganizationId"
+          },
+          {
+            "name": "ledgerName",
+            "in": "path",
+            "description": "The name of the ledger.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/LedgerName"
+            }
+          },
+          {
+            "name": "transactionId",
+            "in": "path",
+            "description": "The id of the transaction.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/TransactionId"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveMetadataRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "The metadata is saved (or was already like this)."
+          },
+          "400": {
+            "description": "The request is wrong.\n\n- `VALIDATION`: the ledger name or the id has a wrong shape, the body is not an object of strings, a key is empty, or there is no key at all.\n- `METADATA_LIMIT_EXCEEDED`: the transaction would have too many keys, or a key, a value or the total would be too big.\n- `INVALID_REQUEST`: the `X-Organization-Id` header is missing or is not a UUIDv7, or the body is not valid JSON.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "There is no such ledger or transaction.\n\n- `LEDGER_NOT_FOUND`: no such ledger in this organization.\n- `TRANSACTION_NOT_FOUND`: no such transaction in this ledger.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ledgers/{ledgerName}/transactions/{transactionId}/metadata/{key}": {
+      "delete": {
+        "tags": [
+          "Transactions"
+        ],
+        "summary": "Remove a metadata key from a transaction",
+        "description": "Removes one metadata key from a transaction of a ledger of the organization of the `X-Organization-Id` header.\n\nIt is safe to repeat: a key that is not there is not an error.",
+        "operationId": "deleteTransactionMetadata",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OrganizationId"
+          },
+          {
+            "name": "ledgerName",
+            "in": "path",
+            "description": "The name of the ledger.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/LedgerName"
+            }
+          },
+          {
+            "name": "transactionId",
+            "in": "path",
+            "description": "The id of the transaction.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/TransactionId"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/MetadataKey"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The key is gone (or was never there)."
+          },
+          "400": {
+            "description": "The request is wrong.\n\n- `VALIDATION`: the ledger name or the id has a wrong shape.\n- `INVALID_REQUEST`: the `X-Organization-Id` header is missing or is not a UUIDv7.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "There is no such ledger or transaction.\n\n- `LEDGER_NOT_FOUND`: no such ledger in this organization.\n- `TRANSACTION_NOT_FOUND`: no such transaction in this ledger.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ledgers/{ledgerName}/accounts": {
+      "get": {
+        "tags": [
+          "Accounts"
+        ],
+        "summary": "List accounts",
+        "description": "Lists the accounts of a ledger of the organization of the `X-Organization-Id` header, one page at a time, sorted by address. Each one has the same shape as the response of the get call.\n\nTo read all pages, call again with `cursor` set to the `next` of the last response, until `hasMore` is `false`. The pages follow the address, so an account that is made while you read never moves the pages after a cursor. It shows up only if its address comes after the cursor.",
+        "operationId": "listAccounts",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OrganizationId"
+          },
+          {
+            "name": "ledgerName",
+            "in": "path",
+            "description": "The name of the ledger.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/LedgerName"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page. It is empty when the ledger has no accounts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is wrong.\n\n- `VALIDATION`: the ledger name has a wrong shape, `pageSize` is not a whole number from 1 to 100, the `cursor` is not one we gave, or a query parameter is unknown.\n- `INVALID_REQUEST`: the `X-Organization-Id` header is missing or is not a UUIDv7.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "There is no such ledger.\n\n- `LEDGER_NOT_FOUND`: no such ledger in this organization.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ledgers/{ledgerName}/accounts/{address}": {
+      "get": {
+        "tags": [
+          "Accounts"
+        ],
+        "summary": "Get an account",
+        "description": "Gets an account of a ledger of the organization of the `X-Organization-Id` header, by its address, with what it holds in each asset.\n\nThere are no accounts to create. An account exists once money has moved through it, so an address that no transaction has used gives `404`.",
+        "operationId": "getAccount",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OrganizationId"
+          },
+          {
+            "name": "ledgerName",
+            "in": "path",
+            "description": "The name of the ledger.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/LedgerName"
+            }
+          },
+          {
+            "name": "address",
+            "in": "path",
+            "description": "The address of the account.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/AccountAddress"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The account.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Account"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is wrong.\n\n- `VALIDATION`: the ledger name or the address has a wrong shape.\n- `INVALID_REQUEST`: the `X-Organization-Id` header is missing or is not a UUIDv7.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "There is no such ledger or account.\n\n- `LEDGER_NOT_FOUND`: no such ledger in this organization.\n- `ACCOUNT_NOT_FOUND`: no such account in this ledger. No transaction has used this address.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ledgers/{ledgerName}/accounts/{address}/metadata": {
+      "post": {
+        "tags": [
+          "Accounts"
+        ],
+        "summary": "Add metadata to an account",
+        "description": "Adds metadata entries to an account of a ledger of the organization of the `X-Organization-Id` header. The body is a plain object, like `{ \"customerId\": \"c_42\" }`. A key that is already there gets the new value, and the other keys stay as they are. The balances never change.\n\nThe account must exist: an address that no transaction has used gives `404`.\n\nIt is safe to repeat: the same body gives the same result. Every real change leaves an entry in the journal, and a repeat that changes nothing leaves none.",
+        "operationId": "saveAccountMetadata",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OrganizationId"
+          },
+          {
+            "name": "ledgerName",
+            "in": "path",
+            "description": "The name of the ledger.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/LedgerName"
+            }
+          },
+          {
+            "name": "address",
+            "in": "path",
+            "description": "The address of the account.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/AccountAddress"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveMetadataRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "The metadata is saved (or was already like this)."
+          },
+          "400": {
+            "description": "The request is wrong.\n\n- `VALIDATION`: the ledger name or the address has a wrong shape, the body is not an object of strings, a key is empty, or there is no key at all.\n- `METADATA_LIMIT_EXCEEDED`: the account would have too many keys, or a key, a value or the total would be too big.\n- `INVALID_REQUEST`: the `X-Organization-Id` header is missing or is not a UUIDv7, or the body is not valid JSON.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "There is no such ledger or account.\n\n- `LEDGER_NOT_FOUND`: no such ledger in this organization.\n- `ACCOUNT_NOT_FOUND`: no such account in this ledger. No transaction has used this address.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ledgers/{ledgerName}/accounts/{address}/metadata/{key}": {
+      "delete": {
+        "tags": [
+          "Accounts"
+        ],
+        "summary": "Remove a metadata key from an account",
+        "description": "Removes one metadata key from an account of a ledger of the organization of the `X-Organization-Id` header.\n\nIt is safe to repeat: a key that is not there is not an error.",
+        "operationId": "deleteAccountMetadata",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OrganizationId"
+          },
+          {
+            "name": "ledgerName",
+            "in": "path",
+            "description": "The name of the ledger.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/LedgerName"
+            }
+          },
+          {
+            "name": "address",
+            "in": "path",
+            "description": "The address of the account.",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/AccountAddress"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/MetadataKey"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The key is gone (or was never there)."
+          },
+          "400": {
+            "description": "The request is wrong.\n\n- `VALIDATION`: the ledger name or the address has a wrong shape.\n- `INVALID_REQUEST`: the `X-Organization-Id` header is missing or is not a UUIDv7.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "There is no such ledger or account.\n\n- `LEDGER_NOT_FOUND`: no such ledger in this organization.\n- `ACCOUNT_NOT_FOUND`: no such account in this ledger. No transaction has used this address.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "Check that the process is running",
+        "description": "Liveness check: it answers whether the process runs. It does not touch the database on purpose, so a database outage does not make an orchestrator restart a healthy process. It needs no `X-Organization-Id` header.",
+        "operationId": "getHealth",
+        "responses": {
+          "200": {
+            "description": "The process is running.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "SaveMetadataRequest": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string",
+          "minLength": 1,
+          "description": "A metadata key: not empty, up to 256 bytes in UTF-8.",
+          "examples": [
+            "orderId"
+          ]
+        },
+        "additionalProperties": {
+          "type": "string"
+        },
+        "description": "Key/value pairs of the caller. Every value is a string. Use ids, not personal data: the journal keeps what is written. Limits: up to 128 keys, 16384 bytes for a value, 65536 bytes for all keys and values together (UTF-8).",
+        "examples": [
+          {
+            "orderId": "42"
+          }
+        ],
+        "minProperties": 1,
+        "$ref": "#/components/schemas/Metadata"
+      },
+      "CreateLedgerRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/LedgerName"
+          },
+          "metadata": {
+            "default": {},
+            "$ref": "#/components/schemas/Metadata"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "CreateTransactionRequest": {
+        "type": "object",
+        "properties": {
+          "postings": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "$ref": "#/components/schemas/AccountAddress"
+                },
+                "destination": {
+                  "$ref": "#/components/schemas/AccountAddress"
+                },
+                "asset": {
+                  "type": "string",
+                  "pattern": "^[A-Z][A-Z0-9]{2,15}$",
+                  "description": "Code of the asset: 3 to 16 characters, uppercase letters and digits, starting with a letter.",
+                  "examples": [
+                    "USD"
+                  ]
+                },
+                "amount": {
+                  "type": "string",
+                  "pattern": "^[1-9][0-9]{0,77}$",
+                  "description": "Whole number above zero, in the smallest unit of the asset (for example cents), written as a string of up to 78 digits with no leading zeros. It is a string so no digit is lost in clients that read JSON numbers as floats.",
+                  "examples": [
+                    "1050"
+                  ]
+                }
+              },
+              "required": [
+                "source",
+                "destination",
+                "asset",
+                "amount"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "reference": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "Your own id for the transaction, unique in the ledger. A second transaction with the same reference is refused.",
+            "examples": [
+              "order-42"
+            ]
+          },
+          "metadata": {
+            "default": {},
+            "$ref": "#/components/schemas/Metadata"
+          }
+        },
+        "required": [
+          "postings"
+        ],
+        "additionalProperties": false
+      },
+      "RevertTransactionRequest": {
+        "default": {},
+        "type": "object",
+        "properties": {
+          "metadata": {
+            "default": {},
+            "$ref": "#/components/schemas/Metadata"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ErrorDetail": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "The bad field, dotted, like `postings.0.amount`.",
+            "examples": [
+              "postings.0.amount"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "description": "What is wrong with it."
+          }
+        },
+        "required": [
+          "path",
+          "message"
+        ]
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "errorCode": {
+            "type": "string",
+            "description": "A stable code to switch on, like `LEDGER_NOT_FOUND`. New codes can be added at any time, so a client must handle a code it does not know by the HTTP status.",
+            "examples": [
+              "LEDGER_NOT_FOUND"
+            ]
+          },
+          "errorMessage": {
+            "type": "string",
+            "description": "A message for people. It can change at any time, so do not switch on it."
+          },
+          "details": {
+            "description": "One entry for each bad field. Only sent with `VALIDATION`.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ErrorDetail"
+            }
+          }
+        },
+        "required": [
+          "errorCode",
+          "errorMessage"
+        ]
+      },
+      "Metadata": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string",
+          "minLength": 1,
+          "description": "A metadata key: not empty, up to 256 bytes in UTF-8.",
+          "examples": [
+            "orderId"
+          ]
+        },
+        "additionalProperties": {
+          "type": "string"
+        },
+        "description": "Key/value pairs of the caller. Every value is a string. Use ids, not personal data: the journal keeps what is written. Limits: up to 128 keys, 16384 bytes for a value, 65536 bytes for all keys and values together (UTF-8).",
+        "examples": [
+          {
+            "orderId": "42"
+          }
+        ]
+      },
+      "Ledger": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+            "description": "Id of the ledger, a UUIDv7 made by the ledger."
+          },
+          "name": {
+            "$ref": "#/components/schemas/LedgerName"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/Metadata"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the ledger was created.",
+            "examples": [
+              "2026-11-03T10:00:00.000Z"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "metadata",
+          "createdAt"
+        ]
+      },
+      "LedgerPage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Ledger"
+            },
+            "description": "The items of this page, sorted by name."
+          },
+          "hasMore": {
+            "type": "boolean",
+            "description": "`true` when there is a next page."
+          },
+          "next": {
+            "description": "The `cursor` that gets the next page. It is there only when `hasMore` is `true`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "data",
+          "hasMore"
+        ]
+      },
+      "LedgerName": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$",
+        "description": "Name of a ledger, unique in its organization. 1 to 63 characters: lowercase letters, digits, \"_\" or \"-\", starting with a letter or digit. A few names are reserved.",
+        "examples": [
+          "main"
+        ]
+      },
+      "Posting": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "description": "The account the money leaves.",
+            "$ref": "#/components/schemas/AccountAddress"
+          },
+          "destination": {
+            "description": "The account the money goes to.",
+            "$ref": "#/components/schemas/AccountAddress"
+          },
+          "asset": {
+            "type": "string",
+            "description": "Code of the asset.",
+            "examples": [
+              "USD"
+            ]
+          },
+          "amount": {
+            "type": "string",
+            "description": "A string of digits, in the smallest unit of the asset, like `\"1050\"`.",
+            "examples": [
+              "1050"
+            ]
+          }
+        },
+        "required": [
+          "source",
+          "destination",
+          "asset",
+          "amount"
+        ]
+      },
+      "Transaction": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/TransactionId"
+          },
+          "reference": {
+            "description": "The id the caller gave to the transaction, or `null`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "postings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Posting"
+            },
+            "description": "The moves of money, in order."
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/Metadata"
+          },
+          "postedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the transaction happened.",
+            "examples": [
+              "2026-11-03T10:00:00.000Z"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the ledger saved the transaction.",
+            "examples": [
+              "2026-11-03T10:00:00.000Z"
+            ]
+          },
+          "revertedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time",
+                "description": "ISO 8601 date in UTC.",
+                "examples": [
+                  "2026-11-03T10:00:00.000Z"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the transaction was reverted, or `null` if it was not."
+          },
+          "revertedByTransactionId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TransactionId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The id of the transaction that reverted this one, or `null` if it was not reverted."
+          }
+        },
+        "required": [
+          "id",
+          "reference",
+          "postings",
+          "metadata",
+          "postedAt",
+          "createdAt",
+          "revertedAt",
+          "revertedByTransactionId"
+        ]
+      },
+      "TransactionPage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Transaction"
+            },
+            "description": "The items of this page, newest first."
+          },
+          "hasMore": {
+            "type": "boolean",
+            "description": "`true` when there is a next page."
+          },
+          "next": {
+            "description": "The `cursor` that gets the next page. It is there only when `hasMore` is `true`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "data",
+          "hasMore"
+        ]
+      },
+      "TransactionId": {
+        "type": "string",
+        "format": "uuid",
+        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+        "description": "Id of a transaction, a UUIDv7 made by the ledger.",
+        "examples": [
+          "0194f0c2-7d5a-7c3e-9b1a-2f6d8e4a1c05"
+        ]
+      },
+      "Balance": {
+        "type": "object",
+        "properties": {
+          "asset": {
+            "type": "string",
+            "description": "Code of the asset.",
+            "examples": [
+              "USD"
+            ]
+          },
+          "amount": {
+            "type": "string",
+            "description": "A string of digits in the smallest unit of the asset, like `\"1050\"`, with a leading `-` when it is below zero (only an account that may go below zero, like `world`, can be).",
+            "examples": [
+              "1050",
+              "-2500"
+            ]
+          }
+        },
+        "required": [
+          "asset",
+          "amount"
+        ]
+      },
+      "Account": {
+        "type": "object",
+        "properties": {
+          "address": {
+            "$ref": "#/components/schemas/AccountAddress"
+          },
+          "allowOverdraft": {
+            "type": "boolean",
+            "description": "`true` when the account may go below zero."
+          },
+          "balances": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Balance"
+            },
+            "description": "One entry for each asset the account has held, in the order of the asset codes."
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/Metadata"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the ledger first saw the account.",
+            "examples": [
+              "2026-11-03T10:00:00.000Z"
+            ]
+          }
+        },
+        "required": [
+          "address",
+          "allowOverdraft",
+          "balances",
+          "metadata",
+          "createdAt"
+        ]
+      },
+      "AccountPage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Account"
+            },
+            "description": "The items of this page, sorted by address."
+          },
+          "hasMore": {
+            "type": "boolean",
+            "description": "`true` when there is a next page."
+          },
+          "next": {
+            "description": "The `cursor` that gets the next page. It is there only when `hasMore` is `true`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "data",
+          "hasMore"
+        ]
+      },
+      "AccountAddress": {
+        "type": "string",
+        "maxLength": 256,
+        "pattern": "^[a-z0-9][a-z0-9_-]*(?::[a-z0-9][a-z0-9_-]*)*$",
+        "description": "Address of an account: parts separated by \":\". Each part starts with a lowercase letter or digit and has only lowercase letters, digits, \"_\" and \"-\". `world` is the account that may go below zero.",
+        "examples": [
+          "world",
+          "users:42"
+        ]
+      },
+      "HealthResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "ok",
+            "description": "Always `ok`. A process that cannot answer is not ok."
+          }
+        },
+        "required": [
+          "status"
+        ]
+      }
+    },
+    "parameters": {
+      "OrganizationId": {
+        "name": "X-Organization-Id",
+        "in": "header",
+        "description": "The organization that owns the data, a UUIDv7. The gateway sets it after it has authenticated the caller, and the ledger trusts it, so never expose the ledger to the public without a gateway. Every ledger belongs to one organization, and one organization never sees the data of another.",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+        }
+      },
+      "PageSize": {
+        "name": "pageSize",
+        "in": "query",
+        "description": "How many items one page has at most.",
+        "required": false,
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 15
+        }
+      },
+      "Cursor": {
+        "name": "cursor",
+        "in": "query",
+        "description": "Where the page starts. Send the `next` of the previous page, unchanged. Leave it out for the first page. Do not build or read cursors: their content can change.",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "maxLength": 400,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        }
+      },
+      "MetadataKey": {
+        "name": "key",
+        "in": "path",
+        "description": "The metadata key to remove.",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "description": "A metadata key: not empty, up to 256 bytes in UTF-8.",
+          "examples": [
+            "orderId"
+          ]
+        }
+      },
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "description": "Makes the request safe to repeat. With a key, the work is done once, however many times the same request is sent: a repeat answers like the first call. A key is remembered for 24 hours, for one ledger. The same key with a different request is refused with `IDEMPOTENCY_KEY_REUSED`. A request that failed leaves no key, so it can be sent again with the same key. Without the header, every request does its work again.",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "pattern": "^[ -~]{1,255}$",
+          "description": "1 to 255 printable ASCII characters. A random UUID works well.",
+          "examples": [
+            "4f6c1c3a-8f0e-4a43-9d7b-1b0f3c2d5e61"
+          ]
+        }
+      }
+    },
+    "headers": {
+      "Location": {
+        "description": "The URL of what was created.",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      "IdempotentReplayed": {
+        "description": "`true` when nothing ran this time: the response is the one of an earlier call with the same `Idempotency-Key`. The header is not there on the first call.",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "const": "true"
+        }
+      }
+    }
+  }
+}

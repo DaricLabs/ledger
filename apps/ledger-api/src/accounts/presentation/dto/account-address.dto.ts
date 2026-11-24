@@ -15,4 +15,11 @@ export const accountAddressSchema = z
   .regex(ACCOUNT_ADDRESS_PATTERN, {
     error:
       'Must be parts separated by ":". Each part starts with a lowercase letter or digit, and has only lowercase letters, digits, "_" and "-"',
+  })
+  .meta({
+    description:
+      'Address of an account: parts separated by ":". Each part starts with a lowercase letter ' +
+      'or digit and has only lowercase letters, digits, "_" and "-". `world` is the account ' +
+      'that may go below zero.',
+    examples: ['world', 'users:42'],
   });

@@ -12,6 +12,7 @@ pnpm-lock.yaml
 **/generated/**
 **/*.generated.ts
 **/*.generated.json
+**/openapi.json
 
 # TypeScript build metadata
 **/*.tsbuildinfo

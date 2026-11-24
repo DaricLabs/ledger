@@ -1,6 +1,6 @@
 import { HttpException } from '@nestjs/common';
 import type { ErrorCode } from './error-code.constant.js';
-import type { IErrorResponse } from './error-response.dto.js';
+import type { ErrorResponseDto } from './error-response.dto.js';
 import { ValidationFailedException } from './validation-failed.exception.js';
 
 const INTERNAL_MESSAGE = 'Internal server error';
@@ -21,7 +21,7 @@ const CODE_BY_STATUS: Record<number, ErrorCode> = {
  * Never puts internal details in the body: unknown errors and all 5xx errors
  * get a fixed message, and the real error stays in the logs.
  */
-export function toErrorResponse(exception: unknown): { status: number; body: IErrorResponse } {
+export function toErrorResponse(exception: unknown): { status: number; body: ErrorResponseDto } {
   if (exception instanceof ValidationFailedException) {
     return {
       status: exception.getStatus(),

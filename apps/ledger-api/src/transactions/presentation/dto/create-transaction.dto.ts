@@ -8,10 +8,17 @@ import {
 } from '../../domain/constants/transaction-limits.constant.js';
 
 /** An asset code in a request. It checks the shape only. */
-const assetCodeSchema = z.string().regex(ASSET_CODE_PATTERN, {
-  error:
-    'Must be 3 to 16 characters: uppercase letters and digits, and it must start with a letter',
-});
+const assetCodeSchema = z
+  .string()
+  .regex(ASSET_CODE_PATTERN, {
+    error:
+      'Must be 3 to 16 characters: uppercase letters and digits, and it must start with a letter',
+  })
+  .meta({
+    description:
+      'Code of the asset: 3 to 16 characters, uppercase letters and digits, starting with a letter.',
+    examples: ['USD'],
+  });
 
 /**
  * An amount in a request: a string of digits for a whole number above zero,
@@ -25,6 +32,15 @@ const amountSchema = z
   .string({ error: 'Must be a string of digits, like "1050"' })
   .regex(/^[1-9][0-9]{0,77}$/, {
     error: 'Must be a whole number above zero, with up to 78 digits and no leading zeros',
+  })
+  // The description goes before the transform: the API description reads the shape a client
+  // sends, which is the string, and keeps what was said about it up to here.
+  .meta({
+    description:
+      'Whole number above zero, in the smallest unit of the asset (for example cents), written ' +
+      'as a string of up to 78 digits with no leading zeros. It is a string so no digit is ' +
+      'lost in clients that read JSON numbers as floats.',
+    examples: ['1050'],
   })
   .transform((amount) => BigInt(amount));
 
@@ -51,7 +67,17 @@ const postingSchema = z.strictObject({
  */
 export const createTransactionSchema = z.strictObject({
   postings: z.array(postingSchema).min(1).max(TRANSACTION_MAX_POSTINGS),
-  reference: z.string().min(1).max(TRANSACTION_REFERENCE_MAX_LENGTH).optional(),
+  reference: z
+    .string()
+    .min(1)
+    .max(TRANSACTION_REFERENCE_MAX_LENGTH)
+    .meta({
+      description:
+        'Your own id for the transaction, unique in the ledger. A second transaction with the ' +
+        'same reference is refused.',
+      examples: ['order-42'],
+    })
+    .optional(),
   metadata: metadataSchema.default({}),
 });
 
