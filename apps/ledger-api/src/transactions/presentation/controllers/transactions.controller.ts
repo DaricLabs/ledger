@@ -108,12 +108,16 @@ export class TransactionsController {
    *
    * **Safe to repeat.** Send an `Idempotency-Key` header (1 to 255 printable
    * ASCII characters) and the transaction is created once, however many times
-   * the same request is sent. A repeat answers like the first call: `201`,
+   * the same request is sent while the key is remembered. A repeat answers like
+   * the first call: `201`,
    * the same body and the same `Location`, plus the header
    * `Idempotent-Replayed: true`. The metadata is part of the request, and a
    * repeat answers with the metadata of the first call, even if it was edited
-   * since. A key is remembered for 24 hours, for one ledger. A request that failed leaves no key, so it can be sent again with
-   * the same key. Without the header, every request creates a transaction.
+   * since. A key is remembered for 24 hours, for one ledger. After that the
+   * same key starts a new request, so do not rely on a key to prevent a
+   * duplicate when you retry later than that. A request that failed leaves no
+   * key, so it can be sent again with the same key. Without the header, every
+   * request creates a transaction.
    *
    * - `201`: the transaction was created (or, with `Idempotent-Replayed: true`,
    *   it was created by an earlier call with the same key). The `Location`
@@ -162,8 +166,11 @@ export class TransactionsController {
    * the same shape as the response of the create call.
    *
    * To read all pages, call again with `cursor` set to the `next` of the last
-   * response, until `hasMore` is `false`. New transactions are always newer,
-   * so they never move the pages that follow a cursor.
+   * response, until `hasMore` is `false`. A transaction that was already there
+   * when you started is never skipped or shown twice. A transaction that is
+   * created while you read can show up on a page you have not read yet, or be
+   * missed by this pass, because it gets its `postedAt` when its request runs,
+   * not when it is saved. Start again from the first page to see it.
    *
    * - `200`: one page. It is empty when the ledger has no transactions.
    * - `400`: `VALIDATION` (the ledger name has a wrong shape, `pageSize` is

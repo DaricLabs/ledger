@@ -290,6 +290,45 @@ describe('buildOpenApiDocument', () => {
       });
     });
 
+    it('refers to the component of the side that reads the schema, when it has a name on each side', () => {
+      const thing = z.object({ name: z.string() });
+      const document = build({
+        requestSchemas: { CreateThing: thing },
+        responseSchemas: { Thing: thing },
+        operations: [
+          operation({
+            method: 'post',
+            requestBody: { required: true, schema: thing },
+            responses: { 201: { description: 'made', schema: thing } },
+          }),
+        ],
+      });
+      const post = operationOf(document, '/things', 'post');
+
+      expect(post.requestBody.content['application/json'].schema).toEqual({
+        $ref: '#/components/schemas/CreateThing',
+      });
+      expect(post.responses['201'].content['application/json'].schema).toEqual({
+        $ref: '#/components/schemas/Thing',
+      });
+    });
+
+    it('writes a schema in place when its name is only on the other side', () => {
+      const thing = z.object({ name: z.string() });
+      const document = build({
+        requestSchemas: { CreateThing: thing },
+        operations: [operation({ responses: { 200: { description: 'ok', schema: thing } } })],
+      });
+
+      expect(
+        operationOf(document, '/things', 'get').responses['200'].content['application/json'].schema,
+      ).toEqual({
+        type: 'object',
+        properties: { name: { type: 'string' } },
+        required: ['name'],
+      });
+    });
+
     it('gives a response with no schema no content, like a 204', () => {
       const document = build({
         operations: [operation({ method: 'delete', responses: { 204: { description: 'gone' } } })],

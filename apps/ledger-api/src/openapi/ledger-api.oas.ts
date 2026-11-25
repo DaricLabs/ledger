@@ -40,8 +40,9 @@ export function buildLedgerOpenApiDocument(version: string): IOpenApiDocument {
       description:
         'A double-entry ledger: ledgers, accounts and transactions that move money between ' +
         'accounts, with an append-only journal.\n\n' +
-        'Every request, except `/health`, carries the `X-Organization-Id` header. All amounts ' +
-        'are strings of digits in the smallest unit of the asset.',
+        'Every request, except `/health`, carries the `X-Organization-Id` header. Posting ' +
+        'amounts are strings of digits in the smallest unit of the asset. Balance amounts use ' +
+        'the same format and have a leading `-` when below zero.',
     },
     tags: [LEDGERS_TAG, TRANSACTIONS_TAG, ACCOUNTS_TAG, HEALTH_TAG],
     modules: OPENAPI_MODULES,

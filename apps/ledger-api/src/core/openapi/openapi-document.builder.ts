@@ -46,7 +46,7 @@ type Json = Record<string, unknown>;
 export function buildOpenApiDocument(input: IOpenApiDocumentInput): IOpenApiDocument {
   const { requestRegistry, responseRegistry, schemas } = buildSchemas(input.modules);
   const resolver = (schema: OpenApiSchema, io: 'input' | 'output') =>
-    resolveSchema(schema, io, [requestRegistry, responseRegistry]);
+    resolveSchema(schema, io, io === 'input' ? requestRegistry : responseRegistry);
 
   const paths: IOpenApiDocument['paths'] = {};
   const operationIds = new Set<string>();
@@ -229,20 +229,22 @@ function readRegistry(registry: Registry, io: 'input' | 'output'): Record<string
 /**
  * Turns a schema into JSON Schema, or a `$ref` when the schema is a named one.
  * An unnamed Zod schema is written out in place.
+ *
+ * Only the registry of the `io` mode is asked: a name in the other registry is
+ * a component that was read the other way (a closed request schema is not the
+ * open response schema), so the schema is written in place in this mode.
  */
 function resolveSchema(
   schema: OpenApiSchema,
   io: 'input' | 'output',
-  registries: Registry[],
+  registry: Registry,
 ): JsonSchema {
   if (!isZodType(schema)) {
     return schema as JsonSchema;
   }
-  for (const registry of registries) {
-    const id = registry.get(schema)?.id;
-    if (id !== undefined) {
-      return { $ref: `${SCHEMA_REF_PREFIX}${id}` };
-    }
+  const id = registry.get(schema)?.id;
+  if (id !== undefined) {
+    return { $ref: `${SCHEMA_REF_PREFIX}${id}` };
   }
   return withoutSchemaKeys(
     z.toJSONSchema(schema, { io, override: io === 'output' ? openResponseObjects : undefined }),

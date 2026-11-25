@@ -135,8 +135,11 @@ export const transactionsOpenApi: IOpenApiModule = {
         'header, one page at a time, newest first (by `postedAt`, and by `id` when two have the ' +
         'same `postedAt`). Each one has the same shape as the response of the create call.\n\n' +
         'To read all pages, call again with `cursor` set to the `next` of the last response, ' +
-        'until `hasMore` is `false`. New transactions are always newer, so they never move the ' +
-        'pages that follow a cursor.',
+        'until `hasMore` is `false`. A transaction that was already there when you started is ' +
+        'never skipped or shown twice. A transaction that is created while you read can show up ' +
+        'on a page you have not read yet, or be missed by this pass, because it gets its ' +
+        '`postedAt` when its request runs, not when it is saved. Start again from the first ' +
+        'page to see it.',
       parameters: [organizationId, LEDGER_NAME_PARAMETER, ...PAGINATION_PARAMETERS],
       responses: {
         200: {

@@ -3,7 +3,7 @@
   "info": {
     "title": "Daric Ledger API",
     "version": "0.0.0",
-    "description": "A double-entry ledger: ledgers, accounts and transactions that move money between accounts, with an append-only journal.\n\nEvery request, except `/health`, carries the `X-Organization-Id` header. All amounts are strings of digits in the smallest unit of the asset."
+    "description": "A double-entry ledger: ledgers, accounts and transactions that move money between accounts, with an append-only journal.\n\nEvery request, except `/health`, carries the `X-Organization-Id` header. Posting amounts are strings of digits in the smallest unit of the asset. Balance amounts use the same format and have a leading `-` when below zero."
   },
   "tags": [
     {
@@ -442,7 +442,7 @@
           "Transactions"
         ],
         "summary": "List transactions",
-        "description": "Lists the transactions of a ledger of the organization of the `X-Organization-Id` header, one page at a time, newest first (by `postedAt`, and by `id` when two have the same `postedAt`). Each one has the same shape as the response of the create call.\n\nTo read all pages, call again with `cursor` set to the `next` of the last response, until `hasMore` is `false`. New transactions are always newer, so they never move the pages that follow a cursor.",
+        "description": "Lists the transactions of a ledger of the organization of the `X-Organization-Id` header, one page at a time, newest first (by `postedAt`, and by `id` when two have the same `postedAt`). Each one has the same shape as the response of the create call.\n\nTo read all pages, call again with `cursor` set to the `next` of the last response, until `hasMore` is `false`. A transaction that was already there when you started is never skipped or shown twice. A transaction that is created while you read can show up on a page you have not read yet, or be missed by this pass, because it gets its `postedAt` when its request runs, not when it is saved. Start again from the first page to see it.",
         "operationId": "listTransactions",
         "parameters": [
           {
@@ -1093,6 +1093,7 @@
           "type": "string"
         },
         "description": "Key/value pairs of the caller. Every value is a string. Use ids, not personal data: the journal keeps what is written. Limits: up to 128 keys, 16384 bytes for a value, 65536 bytes for all keys and values together (UTF-8).",
+        "maxProperties": 128,
         "examples": [
           {
             "orderId": "42"
@@ -1250,6 +1251,7 @@
           "type": "string"
         },
         "description": "Key/value pairs of the caller. Every value is a string. Use ids, not personal data: the journal keeps what is written. Limits: up to 128 keys, 16384 bytes for a value, 65536 bytes for all keys and values together (UTF-8).",
+        "maxProperties": 128,
         "examples": [
           {
             "orderId": "42"
@@ -1303,12 +1305,38 @@
           },
           "next": {
             "description": "The `cursor` that gets the next page. It is there only when `hasMore` is `true`.",
-            "type": "string"
+            "type": "string",
+            "maxLength": 400,
+            "pattern": "^[A-Za-z0-9_-]+$"
           }
         },
         "required": [
           "data",
           "hasMore"
+        ],
+        "oneOf": [
+          {
+            "properties": {
+              "hasMore": {
+                "const": true
+              }
+            },
+            "required": [
+              "next"
+            ]
+          },
+          {
+            "properties": {
+              "hasMore": {
+                "const": false
+              }
+            },
+            "not": {
+              "required": [
+                "next"
+              ]
+            }
+          }
         ]
       },
       "LedgerName": {
@@ -1446,12 +1474,38 @@
           },
           "next": {
             "description": "The `cursor` that gets the next page. It is there only when `hasMore` is `true`.",
-            "type": "string"
+            "type": "string",
+            "maxLength": 400,
+            "pattern": "^[A-Za-z0-9_-]+$"
           }
         },
         "required": [
           "data",
           "hasMore"
+        ],
+        "oneOf": [
+          {
+            "properties": {
+              "hasMore": {
+                "const": true
+              }
+            },
+            "required": [
+              "next"
+            ]
+          },
+          {
+            "properties": {
+              "hasMore": {
+                "const": false
+              }
+            },
+            "not": {
+              "required": [
+                "next"
+              ]
+            }
+          }
         ]
       },
       "TransactionId": {
@@ -1540,12 +1594,38 @@
           },
           "next": {
             "description": "The `cursor` that gets the next page. It is there only when `hasMore` is `true`.",
-            "type": "string"
+            "type": "string",
+            "maxLength": 400,
+            "pattern": "^[A-Za-z0-9_-]+$"
           }
         },
         "required": [
           "data",
           "hasMore"
+        ],
+        "oneOf": [
+          {
+            "properties": {
+              "hasMore": {
+                "const": true
+              }
+            },
+            "required": [
+              "next"
+            ]
+          },
+          {
+            "properties": {
+              "hasMore": {
+                "const": false
+              }
+            },
+            "not": {
+              "required": [
+                "next"
+              ]
+            }
+          }
         ]
       },
       "AccountAddress": {
@@ -1624,7 +1704,7 @@
       "IdempotencyKey": {
         "name": "Idempotency-Key",
         "in": "header",
-        "description": "Makes the request safe to repeat. With a key, the work is done once, however many times the same request is sent: a repeat answers like the first call. A key is remembered for 24 hours, for one ledger. The same key with a different request is refused with `IDEMPOTENCY_KEY_REUSED`. A request that failed leaves no key, so it can be sent again with the same key. Without the header, every request does its work again.",
+        "description": "Makes the request safe to repeat. With a key, the work is done once, however many times the same request is sent while the key is remembered: a repeat answers like the first call. A key is remembered for 24 hours, for one ledger. After that the same key starts a new request, so do not rely on a key to prevent a duplicate when you retry later than that. The same key with a different request is refused with `IDEMPOTENCY_KEY_REUSED`. A request that failed leaves no key, so it can be sent again with the same key. Without the header, every request does its work again.",
         "required": false,
         "schema": {
           "type": "string",

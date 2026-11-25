@@ -15,8 +15,10 @@ export const idempotencyOpenApi: IOpenApiModule = {
       required: false,
       description:
         'Makes the request safe to repeat. With a key, the work is done once, however many ' +
-        `times the same request is sent: a repeat answers like the first call. A key is ` +
-        `remembered for ${IDEMPOTENCY_KEY_TTL_SECONDS / 3600} hours, for one ledger. ` +
+        'times the same request is sent while the key is remembered: a repeat answers like ' +
+        `the first call. A key is remembered for ${IDEMPOTENCY_KEY_TTL_SECONDS / 3600} hours, ` +
+        'for one ledger. After that the same key starts a new request, so do not rely on a ' +
+        'key to prevent a duplicate when you retry later than that. ' +
         'The same key with a different request is refused with `IDEMPOTENCY_KEY_REUSED`. ' +
         'A request that failed leaves no key, so it can be sent again with the same key. ' +
         'Without the header, every request does its work again.',

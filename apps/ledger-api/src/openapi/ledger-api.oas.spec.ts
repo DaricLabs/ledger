@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { METADATA_LIMITS } from '@ledger/domain';
 import { Validator } from '@seriousme/openapi-schema-validator';
 import { ORGANIZATION_ID_HEADER } from '../core/tenant/tenant.guard.js';
 import {
@@ -157,6 +158,36 @@ describe('the OpenAPI document of the ledger API', () => {
     expect(document.components.schemas.SaveMetadataRequest).toMatchObject({
       type: 'object',
       minProperties: 1,
+    });
+  });
+
+  it('says the most keys that metadata can have, in the shared schema and in the save body', () => {
+    const { Metadata, SaveMetadataRequest } = document.components.schemas as Json;
+
+    expect(Metadata.maxProperties).toBe(METADATA_LIMITS.maxEntries);
+    expect(SaveMetadataRequest.maxProperties).toBe(METADATA_LIMITS.maxEntries);
+  });
+
+  describe.each(['LedgerPage', 'TransactionPage', 'AccountPage'])('%s', (name) => {
+    const page = document.components.schemas[name] as Json;
+
+    it('gives `next` the shape of the `cursor` parameter', () => {
+      const cursor = (document.components.parameters as Json).Cursor.schema;
+
+      expect(page.properties.next).toMatchObject({
+        type: 'string',
+        maxLength: cursor.maxLength,
+        pattern: cursor.pattern,
+      });
+    });
+
+    it('wants `next` when `hasMore` is true, and no `next` when it is false', () => {
+      expect(page.required).toEqual(expect.arrayContaining(['data', 'hasMore']));
+      expect(page.required).not.toContain('next');
+      expect(page.oneOf).toEqual([
+        { properties: { hasMore: { const: true } }, required: ['next'] },
+        { properties: { hasMore: { const: false } }, not: { required: ['next'] } },
+      ]);
     });
   });
 

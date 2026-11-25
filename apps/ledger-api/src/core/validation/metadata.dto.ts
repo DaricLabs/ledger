@@ -17,7 +17,10 @@ export const metadataKeySchema = z
 /**
  * Shape of a metadata object: non-empty keys and string values. Every body
  * that carries metadata uses it. The size limits are not checked here: they
- * are the rules of `Metadata` in `@ledger/domain`.
+ * are the rules of `Metadata` in `@ledger/domain`. The number of keys is also
+ * written in the API description (`maxProperties`), from the same constant, so
+ * a client can see the limit. A save adds to the metadata that is already
+ * there, so a body inside the limit can still be refused.
  *
  * A `__proto__` key is dropped by Zod without an error. That is safe (the
  * object is not polluted), so we accept it.
@@ -28,6 +31,7 @@ export const metadataSchema = z.record(metadataKeySchema, z.string()).meta({
     'Use ids, not personal data: the journal keeps what is written. ' +
     `Limits: up to ${METADATA_LIMITS.maxEntries} keys, ${METADATA_LIMITS.maxValueBytes} bytes for a value, ` +
     `${METADATA_LIMITS.maxTotalBytes} bytes for all keys and values together (UTF-8).`,
+  maxProperties: METADATA_LIMITS.maxEntries,
   examples: [{ orderId: '42' }],
 });
 
