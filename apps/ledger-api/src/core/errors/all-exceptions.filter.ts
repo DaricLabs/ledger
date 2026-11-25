@@ -5,7 +5,7 @@ import { toErrorResponse } from './error-response.mapper.js';
 
 /**
  * Catches every error thrown while handling an HTTP request and sends the
- * one error body format (`IErrorResponse`).
+ * one error body format (`ErrorResponseDto`).
  *
  * It does not log. `LoggerErrorInterceptor` attaches the error to the
  * response, so the final request log line of a failed request carries it.

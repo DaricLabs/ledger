@@ -31,8 +31,8 @@ import { listLedgersQuerySchema, type ListLedgersQueryDto } from '../dto/list-le
 import {
   toLedgerPageResponseDto,
   toLedgerResponseDto,
-  type ILedgerPageResponse,
-  type ILedgerResponse,
+  type LedgerPageResponseDto,
+  type LedgerResponseDto,
 } from '../dto/ledger-response.dto.js';
 import { ledgerNameSchema } from '../dto/ledger-name.dto.js';
 import { LedgerExceptionFilter } from '../filters/ledger-exception.filter.js';
@@ -74,7 +74,7 @@ export class LedgersController {
     @OrganizationId() organizationId: string,
     @Body({ schema: createLedgerSchema }) body: CreateLedgerDto,
     @Res({ passthrough: true }) response: Response,
-  ): Promise<ILedgerResponse> {
+  ): Promise<LedgerResponseDto> {
     const ledger = await this.createLedger.execute({
       organizationId,
       name: body.name,
@@ -100,7 +100,7 @@ export class LedgersController {
   async list(
     @OrganizationId() organizationId: string,
     @Query({ schema: listLedgersQuerySchema }) query: ListLedgersQueryDto,
-  ): Promise<ILedgerPageResponse> {
+  ): Promise<LedgerPageResponseDto> {
     const page = await this.listLedgers.execute({
       organizationId,
       pageSize: query.pageSize,
@@ -120,7 +120,7 @@ export class LedgersController {
   async get(
     @OrganizationId() organizationId: string,
     @Param('name', { schema: ledgerNameSchema }) name: string,
-  ): Promise<ILedgerResponse> {
+  ): Promise<LedgerResponseDto> {
     const ledger = await this.getLedger.execute({ organizationId, name });
     return toLedgerResponseDto(ledger);
   }

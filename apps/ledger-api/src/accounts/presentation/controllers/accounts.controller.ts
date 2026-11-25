@@ -33,8 +33,8 @@ import {
 import {
   toAccountPageResponseDto,
   toAccountResponseDto,
-  type IAccountPageResponse,
-  type IAccountResponse,
+  type AccountPageResponseDto,
+  type AccountResponseDto,
 } from '../dto/account-response.dto.js';
 
 const LEDGERS_PATH = 'ledgers';
@@ -85,7 +85,7 @@ export class AccountsController {
     @OrganizationId() organizationId: string,
     @Param('ledgerName', { schema: ledgerNameSchema }) ledgerName: string,
     @Query({ schema: listAccountsQuerySchema }) query: ListAccountsQueryDto,
-  ): Promise<IAccountPageResponse> {
+  ): Promise<AccountPageResponseDto> {
     const page = await this.listAccounts.execute({
       organizationId,
       ledgerName,
@@ -113,7 +113,7 @@ export class AccountsController {
     @OrganizationId() organizationId: string,
     @Param('ledgerName', { schema: ledgerNameSchema }) ledgerName: string,
     @Param('address', { schema: accountAddressSchema }) address: string,
-  ): Promise<IAccountResponse> {
+  ): Promise<AccountResponseDto> {
     const account = await this.getAccount.execute({ organizationId, ledgerName, address });
     return toAccountResponseDto(account);
   }
