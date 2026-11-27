@@ -64,13 +64,14 @@ export class SaveLedgerMetadataUseCase {
       }
 
       await this.ledgers.updateMetadata(trx, updated);
-      await this.logs.append(trx, {
+      const logSeq = await this.logs.append(trx, {
         ledgerId: ledger.id,
         type: LEDGER_LOG_TYPE.METADATA_SAVED,
         payload: { metadata: input.metadata },
       });
       await this.outbox.append(trx, {
         ledgerId: ledger.id,
+        logSeq,
         aggregateType: 'ledger',
         aggregateId: ledger.id,
         eventType: 'ledger.metadata.saved',

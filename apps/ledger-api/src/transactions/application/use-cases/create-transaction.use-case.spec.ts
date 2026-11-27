@@ -33,6 +33,7 @@ import type { ITransactionRepository } from '../ports/transaction-repository.por
 import { CreateTransactionUseCase } from './create-transaction.use-case.js';
 
 const ORG_ID = '0190a5d4-7b3c-7abc-8def-0123456789ab';
+const LOG_SEQ = '7';
 const LEDGER_ID = '0190a5d4-7b3c-7abc-8def-0123456789ac';
 const TRANSACTION_ID = '0190a5d4-7b3c-7abc-8def-0123456789ad';
 
@@ -113,6 +114,7 @@ function setup(held: Held = {}) {
   const logs = {
     append: vi.fn<ILedgerLogWriter['append']>(async () => {
       calls.push('log');
+      return LOG_SEQ;
     }),
   };
   const outbox = {
@@ -300,6 +302,7 @@ describe('CreateTransactionUseCase', () => {
 
     expect(outbox.append).toHaveBeenCalledExactlyOnceWith(trx, {
       ledgerId: LEDGER_ID,
+      logSeq: LOG_SEQ,
       aggregateType: 'transaction',
       aggregateId: TRANSACTION_ID,
       eventType: 'ledger.transaction.created',

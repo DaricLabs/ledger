@@ -9,6 +9,7 @@ import type { ITenantTransactionRunner } from '../../../journal/application/port
 import { SaveLedgerMetadataUseCase } from './save-ledger-metadata.use-case.js';
 
 const ORG_ID = '0190a5d4-7b3c-7abc-8def-0123456789ab';
+const LOG_SEQ = '7';
 const LEDGER_ID = '0190a5d4-7b3c-7abc-8def-0123456789ac';
 
 const storedLedger = Ledger.reconstitute({
@@ -51,6 +52,7 @@ function setup() {
   const logs = {
     append: vi.fn<ILedgerLogWriter['append']>(async () => {
       calls.push('log');
+      return LOG_SEQ;
     }),
   };
   const outbox = {
@@ -135,6 +137,7 @@ describe('SaveLedgerMetadataUseCase', () => {
 
     expect(outbox.append).toHaveBeenCalledExactlyOnceWith(trx, {
       ledgerId: LEDGER_ID,
+      logSeq: LOG_SEQ,
       aggregateType: 'ledger',
       aggregateId: LEDGER_ID,
       eventType: 'ledger.metadata.saved',

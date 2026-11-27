@@ -6,6 +6,14 @@ import type { TenantTransaction } from '@ledger/database';
  */
 export interface IOutboxEvent {
   ledgerId: string;
+  /**
+   * The `seq` returned by `ILedgerLogWriter.append` for the log entry
+   * of the same change. Together with `ledgerId` it names the event for good,
+   * so a consumer can drop an event it already handled (delivery is
+   * at-least-once, so an event can arrive twice). The database refuses a
+   * second event for the same entry and an entry that does not exist.
+   */
+  logSeq: string;
   /** What the event is about, like `ledger` or `transaction`. */
   aggregateType: string;
   aggregateId: string;

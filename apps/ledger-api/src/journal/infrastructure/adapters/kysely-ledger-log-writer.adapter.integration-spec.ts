@@ -77,6 +77,23 @@ describe('KyselyLedgerLogWriter.append', () => {
     expect(logs[1]).toMatchObject({ seq: '2', transaction_id: null });
   });
 
+  it('returns the seq it gave to the entry', async () => {
+    const organizationId = ids.next();
+
+    const seqs = await withTenant(db, organizationId, async (trx) => {
+      const ledgerId = await insertLedger(trx, organizationId);
+      const first = await writer.append(trx, { ledgerId, type: 'SOMETHING_HAPPENED', payload: {} });
+      const second = await writer.append(trx, {
+        ledgerId,
+        type: 'SOMETHING_HAPPENED',
+        payload: {},
+      });
+      return [first, second];
+    });
+
+    expect(seqs).toEqual(['1', '2']);
+  });
+
   it('links the entry to a transaction when a transactionId is given', async () => {
     const organizationId = ids.next();
 

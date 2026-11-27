@@ -60,13 +60,14 @@ export class CreateLedgerUseCase {
     await this.transactions.run(input.organizationId, async (trx) => {
       // Order matters: the log and the outbox rows point to the ledger row.
       await this.ledgers.insert(trx, ledger);
-      await this.logs.append(trx, {
+      const logSeq = await this.logs.append(trx, {
         ledgerId: ledger.id,
         type: LEDGER_LOG_TYPE.CREATED,
         payload: { name: ledger.name, metadata: ledger.metadata.entries },
       });
       await this.outbox.append(trx, {
         ledgerId: ledger.id,
+        logSeq,
         aggregateType: 'ledger',
         aggregateId: ledger.id,
         eventType: 'ledger.created',

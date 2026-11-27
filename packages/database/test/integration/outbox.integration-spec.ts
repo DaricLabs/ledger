@@ -2,7 +2,7 @@ import { randomUUIDv7 } from 'node:crypto';
 import { sql, type Kysely, type Transaction } from 'kysely';
 import type { DB } from '../../src/storage.js';
 import { createRuntimeDb, inTenant } from '../support/db.js';
-import { insertLedger, insertOutboxEvent } from '../support/fixtures.js';
+import { insertLedger, insertLog, insertOutboxEvent } from '../support/fixtures.js';
 
 describe('outbox_events', () => {
   let db: Kysely<DB>;
@@ -130,6 +130,50 @@ describe('outbox_events', () => {
       ).rejects.toMatchObject({ code: '23514' });
     },
   );
+
+  it('keeps the seq of the log entry it was written with', async () => {
+    const { logSeq, event } = await withLedger(async (trx, org, ledgerId) => {
+      const seq = await insertLog(trx, org, ledgerId);
+      const id = String(await insertOutboxEvent(trx, org, ledgerId, { log_seq: seq }));
+      const row = await trx
+        .selectFrom('outbox_events')
+        .select('log_seq')
+        .where('id', '=', id)
+        .executeTakeFirstOrThrow();
+      return { logSeq: seq, event: row };
+    });
+
+    expect(event.log_seq).toBe(String(logSeq));
+  });
+
+  it('rejects an event without a log entry', async () => {
+    await expect(
+      withLedger((trx, org, ledgerId) => insertOutboxEvent(trx, org, ledgerId, { log_seq: 99 })),
+    ).rejects.toMatchObject({ code: '23503' });
+  });
+
+  it('rejects an event that points to a log entry of another ledger', async () => {
+    await expect(
+      withLedger(async (trx, org, ledgerId) => {
+        const other = await insertLedger(trx, org);
+        const seq = await insertLog(trx, org, other.id);
+        await insertOutboxEvent(trx, org, ledgerId, { log_seq: seq });
+      }),
+    ).rejects.toMatchObject({ code: '23503' });
+  });
+
+  it('rejects a second event for the same log entry', async () => {
+    await expect(
+      withLedger(async (trx, org, ledgerId) => {
+        const seq = await insertLog(trx, org, ledgerId);
+        await insertOutboxEvent(trx, org, ledgerId, { log_seq: seq });
+        await insertOutboxEvent(trx, org, ledgerId, { log_seq: seq });
+      }),
+    ).rejects.toMatchObject({
+      code: '23505',
+      constraint: 'outbox_events_organization_id_ledger_id_log_seq_key',
+    });
+  });
 
   it('does not let the app change the payload of an event', async () => {
     await expect(

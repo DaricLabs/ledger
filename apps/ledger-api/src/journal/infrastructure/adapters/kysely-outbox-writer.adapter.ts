@@ -11,6 +11,7 @@ export class KyselyOutboxWriter implements IOutboxWriter {
       .values({
         organization_id: sql<string>`current_organization_id()`, // same reason as the log writer
         ledger_id: event.ledgerId,
+        log_seq: event.logSeq,
         aggregate_type: event.aggregateType,
         aggregate_id: event.aggregateId,
         event_type: event.eventType,

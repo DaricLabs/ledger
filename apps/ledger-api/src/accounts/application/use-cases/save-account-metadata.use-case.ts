@@ -109,13 +109,14 @@ export class SaveAccountMetadataUseCase {
 
       const changed = changedEntries(account.metadata.entries, changes);
       await this.accounts.updateMetadata(trx, ledger.id, updated);
-      await this.logs.append(trx, {
+      const logSeq = await this.logs.append(trx, {
         ledgerId: ledger.id,
         type: ACCOUNT_LOG_TYPE.METADATA_SAVED,
         payload: { address: address.value, metadata: changed },
       });
       await this.outbox.append(trx, {
         ledgerId: ledger.id,
+        logSeq,
         aggregateType: 'account',
         aggregateId: address.value,
         eventType: 'ledger.account.metadata.saved',

@@ -121,6 +121,7 @@ describe('LedgersModule (real database)', () => {
       aggregate_id: ledger.id,
       event_type: 'ledger.created',
       event_version: 1,
+      log_seq: logs[0]?.seq, // the event is tied to the log entry of the same change
       published_at: null, // the relay worker has not published it yet
       payload: {
         ledgerId: ledger.id,

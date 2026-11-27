@@ -350,6 +350,7 @@ create table outbox_events (
   id               bigint generated always as identity primary key,
   organization_id  uuidv7 not null,
   ledger_id        uuidv7 not null,
+  log_seq          bigint not null,
   aggregate_type   text not null,
   aggregate_id     text not null,
   event_type       event_type not null,
@@ -360,8 +361,13 @@ create table outbox_events (
   publish_attempts integer not null default 0,
   last_error       text,
 
+  unique (organization_id, ledger_id, log_seq),
+
   foreign key (organization_id, ledger_id)
     references ledgers (organization_id, id),
+
+  foreign key (organization_id, ledger_id, log_seq)
+    references ledger_logs (organization_id, ledger_id, seq),
 
   constraint outbox_events_aggregate_type_valid
     check (aggregate_type ~ '^[a-z0-9_]+$' and length(aggregate_type) <= 64),
@@ -384,12 +390,23 @@ create table outbox_events (
   constraint outbox_events_last_error_requires_attempt
     check (last_error is null or publish_attempts > 0)
 );
--- Transactional outbox for reliable event publishing.
+-- Transactional outbox for reliable event publishing. Each event is written
+-- with the log entry of the same change, so (ledger_id, log_seq) names it for
+-- good: a consumer uses it to drop an event it already handled, because
+-- delivery is at-least-once. The unique constraint allows one event per log
+-- entry, the foreign key allows no event without one.
+--
+-- Order: two changes to one ledger never overlap (the log insert locks the
+-- ledgers row until commit), so inside one ledger the ids and the log_seq
+-- values grow together. The relay reads unpublished rows in id order and
+-- publishes them one relay at a time, so each ledger's events leave in order.
+-- It must NOT claim rows in parallel with FOR UPDATE SKIP LOCKED: that would
+-- let a later event of a ledger overtake an earlier one.
 
 create index idx_outbox_events_unpublished
   on outbox_events (id)
   where published_at is null;
--- Supports relay worker queries using FOR UPDATE SKIP LOCKED.
+-- Supports the relay's read of the oldest unpublished events, in id order.
 
 
 -- ---------- idempotency_keys ---------------------------------------------
@@ -883,6 +900,9 @@ comment on column ledger_audit_anchors.from_log_seq is
 
 comment on column ledger_audit_anchors.to_log_seq is
   'Last ledger_logs.seq covered by this anchor (inclusive).';
+
+comment on column outbox_events.log_seq is
+  'ledger_logs.seq of the log entry written for the same change. With ledger_id it is the stable identity of the event.';
 
 comment on column outbox_events.aggregate_type is
   'Aggregate type name, e.g. transaction, account, ledger.';

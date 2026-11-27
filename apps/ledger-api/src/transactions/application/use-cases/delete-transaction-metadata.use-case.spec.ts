@@ -13,6 +13,7 @@ import type { ITransactionRepository } from '../ports/transaction-repository.por
 import { DeleteTransactionMetadataUseCase } from './delete-transaction-metadata.use-case.js';
 
 const ORG_ID = '0190a5d4-7b3c-7abc-8def-0123456789ab';
+const LOG_SEQ = '7';
 const LEDGER_ID = '0190a5d4-7b3c-7abc-8def-0123456789ac';
 const TRANSACTION_ID = '0190a5d4-7b3c-7abc-8def-0123456789ad';
 
@@ -85,6 +86,7 @@ function setup(transaction: Transaction | null = stored({ orderId: '42', note: '
   const logs = {
     append: vi.fn<ILedgerLogWriter['append']>(async () => {
       calls.push('log');
+      return LOG_SEQ;
     }),
   };
   const outbox = {
@@ -177,6 +179,7 @@ describe('DeleteTransactionMetadataUseCase', () => {
 
     expect(outbox.append).toHaveBeenCalledExactlyOnceWith(trx, {
       ledgerId: LEDGER_ID,
+      logSeq: LOG_SEQ,
       aggregateType: 'transaction',
       aggregateId: TRANSACTION_ID,
       eventType: 'ledger.transaction.metadata.deleted',
@@ -208,6 +211,7 @@ describe('DeleteTransactionMetadataUseCase', () => {
     });
     logs.append.mockImplementationOnce(async () => {
       changing.key = 'other';
+      return LOG_SEQ;
     });
 
     await useCase.execute(changing);

@@ -148,6 +148,10 @@ export interface OutboxEvents {
   id: Generated<Int8>;
   last_error: string | null;
   ledger_id: string;
+  /**
+   * ledger_logs.seq of the log entry written for the same change. With ledger_id it is the stable identity of the event.
+   */
+  log_seq: Int8;
   organization_id: string;
   payload: Json;
   publish_attempts: Generated<number>;

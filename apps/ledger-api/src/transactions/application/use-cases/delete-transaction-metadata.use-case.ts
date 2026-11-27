@@ -83,7 +83,7 @@ export class DeleteTransactionMetadataUseCase {
       }
 
       await this.transactionRepository.updateMetadata(trx, updated);
-      await this.logs.append(trx, {
+      const logSeq = await this.logs.append(trx, {
         ledgerId: ledger.id,
         type: TRANSACTION_LOG_TYPE.METADATA_DELETED,
         transactionId: transaction.id,
@@ -91,6 +91,7 @@ export class DeleteTransactionMetadataUseCase {
       });
       await this.outbox.append(trx, {
         ledgerId: ledger.id,
+        logSeq,
         aggregateType: 'transaction',
         aggregateId: transaction.id,
         eventType: 'ledger.transaction.metadata.deleted',
