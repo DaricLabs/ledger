@@ -70,13 +70,14 @@ export class DeleteLedgerUseCase {
 
       // Order matters: the log must come before `markDeleted`, because
       // storage refuses logs for a deleted ledger.
-      await this.logs.append(trx, {
+      const logSeq = await this.logs.append(trx, {
         ledgerId: ledger.id,
         type: LEDGER_LOG_TYPE.DELETED,
         payload: { name: ledger.name },
       });
       await this.outbox.append(trx, {
         ledgerId: ledger.id,
+        logSeq,
         aggregateType: 'ledger',
         aggregateId: ledger.id,
         eventType: 'ledger.deleted',

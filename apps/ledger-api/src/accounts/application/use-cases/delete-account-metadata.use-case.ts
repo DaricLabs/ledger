@@ -86,13 +86,14 @@ export class DeleteAccountMetadataUseCase {
       }
 
       await this.accounts.updateMetadata(trx, ledger.id, updated);
-      await this.logs.append(trx, {
+      const logSeq = await this.logs.append(trx, {
         ledgerId: ledger.id,
         type: ACCOUNT_LOG_TYPE.METADATA_DELETED,
         payload: { address: address.value, key },
       });
       await this.outbox.append(trx, {
         ledgerId: ledger.id,
+        logSeq,
         aggregateType: 'account',
         aggregateId: address.value,
         eventType: 'ledger.account.metadata.deleted',

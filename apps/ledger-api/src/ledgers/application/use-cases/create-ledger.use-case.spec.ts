@@ -8,6 +8,7 @@ import { InvalidLedgerNameError } from '../../domain/errors/invalid-ledger-name.
 import { CreateLedgerUseCase } from './create-ledger.use-case.js';
 
 const ORG_ID = '0190a5d4-7b3c-7abc-8def-0123456789ab';
+const LOG_SEQ = '7';
 const LEDGER_ID = '0190a5d4-7b3c-7abc-8def-0123456789ac';
 const NOW = new Date('2026-10-31T10:00:00.000Z');
 
@@ -41,6 +42,7 @@ function setup() {
   const logs = {
     append: vi.fn<ILedgerLogWriter['append']>(async () => {
       calls.push('log');
+      return LOG_SEQ;
     }),
   };
   const outbox = {
@@ -136,6 +138,7 @@ describe('CreateLedgerUseCase', () => {
 
     expect(outbox.append).toHaveBeenCalledExactlyOnceWith(trx, {
       ledgerId: LEDGER_ID,
+      logSeq: LOG_SEQ,
       aggregateType: 'ledger',
       aggregateId: LEDGER_ID,
       eventType: 'ledger.created',

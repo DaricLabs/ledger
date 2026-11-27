@@ -8,8 +8,8 @@ import type {
 
 @Injectable()
 export class KyselyLedgerLogWriter implements ILedgerLogWriter {
-  async append(trx: TenantTransaction, entry: ILedgerLogEntry): Promise<void> {
-    await unwrapTenantTransaction(trx)
+  async append(trx: TenantTransaction, entry: ILedgerLogEntry): Promise<string> {
+    const row = await unwrapTenantTransaction(trx)
       .insertInto('ledger_logs')
       .values({
         // The tenant is the one set on the transaction. A row for another
@@ -23,6 +23,8 @@ export class KyselyLedgerLogWriter implements ILedgerLogWriter {
         type: entry.type,
         payload: JSON.stringify(entry.payload), // Postgres parses the text as jsonb
       })
-      .execute();
+      .returning('seq')
+      .executeTakeFirstOrThrow();
+    return row.seq;
   }
 }

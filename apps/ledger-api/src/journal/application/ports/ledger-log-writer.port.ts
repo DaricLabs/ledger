@@ -26,8 +26,12 @@ export interface ILedgerLogEntry {
  * so entries are written in the same transaction as the change they describe.
  */
 export interface ILedgerLogWriter {
-  /** Adds one entry. The database gives it the next `seq` of the ledger. */
-  append(trx: TenantTransaction, entry: ILedgerLogEntry): Promise<void>;
+  /**
+   * Adds one entry. The database gives it the next `seq` of the ledger, and
+   * this returns that `seq`. It is a string because it is a 64-bit number and
+   * a JavaScript number is exact only up to 2^53.
+   */
+  append(trx: TenantTransaction, entry: ILedgerLogEntry): Promise<string>;
 }
 
 /** Nest DI token for {@link ILedgerLogWriter}. */

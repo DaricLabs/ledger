@@ -31,6 +31,7 @@ import type { ITransactionRepository } from '../ports/transaction-repository.por
 import { RevertTransactionUseCase } from './revert-transaction.use-case.js';
 
 const ORG_ID = '0190a5d4-7b3c-7abc-8def-0123456789ab';
+const LOG_SEQ = '7';
 const LEDGER_ID = '0190a5d4-7b3c-7abc-8def-0123456789ac';
 const ORIGINAL_ID = '0190a5d4-7b3c-7abc-8def-0123456789ad';
 const REVERSAL_ID = '0190a5d4-7b3c-7abc-8def-0123456789ae';
@@ -138,6 +139,7 @@ function setup(held: Held = afterOriginal) {
   const logs = {
     append: vi.fn<ILedgerLogWriter['append']>(async () => {
       calls.push('log');
+      return LOG_SEQ;
     }),
   };
   const outbox = {
@@ -402,6 +404,7 @@ describe('RevertTransactionUseCase', () => {
 
     expect(outbox.append).toHaveBeenCalledExactlyOnceWith(trx, {
       ledgerId: LEDGER_ID,
+      logSeq: LOG_SEQ,
       aggregateType: 'transaction',
       aggregateId: REVERSAL_ID,
       eventType: 'ledger.transaction.reverted',

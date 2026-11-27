@@ -195,7 +195,7 @@ export class RevertTransactionUseCase {
       // mark points to it too, so it is saved first.
       await this.transactionRepository.insert(trx, reversal);
       await this.transactionRepository.markReverted(trx, ledger.id, original.id, reversal);
-      await this.logs.append(trx, {
+      const logSeq = await this.logs.append(trx, {
         ledgerId: ledger.id,
         type: TRANSACTION_LOG_TYPE.REVERTED,
         transactionId: reversal.id,
@@ -208,6 +208,7 @@ export class RevertTransactionUseCase {
       });
       await this.outbox.append(trx, {
         ledgerId: ledger.id,
+        logSeq,
         aggregateType: 'transaction',
         aggregateId: reversal.id,
         eventType: 'ledger.transaction.reverted',

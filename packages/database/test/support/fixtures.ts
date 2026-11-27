@@ -135,11 +135,16 @@ export async function insertAnchor(
     .execute();
 }
 
+/**
+ * Inserts one outbox event. It points to the log entry `log_seq`, or to a new
+ * log entry of the ledger when none is given (an event needs one).
+ */
 export async function insertOutboxEvent(
   trx: Transaction<DB>,
   organizationId: string,
   ledgerId: string,
   values: Partial<{
+    log_seq: number;
     aggregate_type: string;
     aggregate_id: string;
     event_type: string;
@@ -149,11 +154,13 @@ export async function insertOutboxEvent(
     last_error: string | null;
   }> = {},
 ): Promise<number> {
+  const logSeq = values.log_seq ?? (await insertLog(trx, organizationId, ledgerId));
   const row = await trx
     .insertInto('outbox_events')
     .values({
       organization_id: organizationId,
       ledger_id: ledgerId,
+      log_seq: logSeq,
       aggregate_type: 'transaction',
       aggregate_id: randomUUIDv7(),
       event_type: 'ledger.transaction.created',

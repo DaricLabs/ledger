@@ -203,7 +203,7 @@ export class CreateTransactionUseCase {
 
       // The log and the outbox rows point to the transaction row, so it comes first.
       await this.transactionRepository.insert(trx, transaction);
-      await this.logs.append(trx, {
+      const logSeq = await this.logs.append(trx, {
         ledgerId: ledger.id,
         type: TRANSACTION_LOG_TYPE.CREATED,
         transactionId: transaction.id,
@@ -216,6 +216,7 @@ export class CreateTransactionUseCase {
       });
       await this.outbox.append(trx, {
         ledgerId: ledger.id,
+        logSeq,
         aggregateType: 'transaction',
         aggregateId: transaction.id,
         eventType: 'ledger.transaction.created',
