@@ -142,7 +142,10 @@ describe('row-level security', () => {
       ledger_logs: (trx, b) => insertLog(trx, b.organizationId, b.ledgerId),
       ledger_audit_anchors: (trx, b) =>
         insertAnchor(trx, b.organizationId, b.ledgerId, { from: 1, to: 1 }),
-      outbox_events: (trx, b) => insertOutboxEvent(trx, b.organizationId, b.ledgerId),
+      // Point to tenant B's first log entry. Without a seq the helper would add
+      // a log entry first, and that insert would be refused instead of this one.
+      outbox_events: (trx, b) =>
+        insertOutboxEvent(trx, b.organizationId, b.ledgerId, { log_seq: 1 }),
       idempotency_keys: (trx, b) =>
         insertIdempotencyKey(trx, b.organizationId, b.ledgerId, {
           transaction_id: b.transactionId,
@@ -156,7 +159,13 @@ describe('row-level security', () => {
           inTenant(db, tenantA.organizationId, (trx) => insertsForTenantB[table](trx, tenantB)),
         ).rejects.toMatchObject({
           code: '42501',
-          message: expect.stringContaining('row-level security'),
+          // The message names the table whose policy refused the row, so
+          // outbox_events must be the one that refuses it, not a log entry.
+          message: expect.stringContaining(
+            table === 'outbox_events'
+              ? 'row-level security policy for table "outbox_events"'
+              : 'row-level security',
+          ),
         });
       },
     );
