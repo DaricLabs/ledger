@@ -875,21 +875,38 @@ create policy idempotency_keys_tenant_isolation on idempotency_keys
 -- WITH CHECK prevents writing a row for another tenant.
 
 -- The outbox relay publishes events of every tenant, so it cannot set one
--- tenant. These policies apply to ledger_relay only and are added to the tenant
--- policy above (policies of one command are OR-ed). Table grants (end of file)
--- already limit what the relay can touch. These add the row rules.
+-- tenant. These policies apply to ledger_relay only. Table grants (end of file)
+-- already limit what the relay can touch. The policies add the row rules.
+--
+-- Policies of one kind are OR-ed, and the tenant policy above also applies to
+-- ledger_relay. So the relay would pass the row rules just by setting the
+-- tenant of an event. That is why the row rules are RESTRICTIVE: they are
+-- AND-ed with everything else and hold whatever tenant the relay sets.
 create policy outbox_events_relay_select on outbox_events
   for select to ledger_relay
   using (true);
 
--- A published event is frozen: the relay can only change rows not yet published.
 create policy outbox_events_relay_update on outbox_events
+  for update to ledger_relay
+  using (true)
+  with check (true);
+
+create policy outbox_events_relay_delete on outbox_events
+  for delete to ledger_relay
+  using (true);
+
+-- A published event is frozen: the relay can only change rows not yet published.
+-- WITH CHECK is true, otherwise the new row would also have to be unpublished
+-- and the relay could never mark an event as published.
+create policy outbox_events_relay_update_unpublished_only on outbox_events
+  as restrictive
   for update to ledger_relay
   using (published_at is null)
   with check (true);
 
 -- Cleanup removes published events only, never one that still has to be sent.
-create policy outbox_events_relay_delete on outbox_events
+create policy outbox_events_relay_delete_published_only on outbox_events
+  as restrictive
   for delete to ledger_relay
   using (published_at is not null);
 

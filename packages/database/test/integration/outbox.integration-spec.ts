@@ -299,28 +299,72 @@ describe('outbox_events', () => {
       ).rejects.toMatchObject({ code: '42501' });
     });
 
-    it('freezes a published event: the relay can no longer change it', async () => {
-      const { id } = await commitEvent();
-      await relay
-        .updateTable('outbox_events')
-        .set({ publish_attempts: 1, published_at: sql<Date>`now()` })
-        .where('id', '=', id)
-        .execute();
+    // The relay must not get around the row rules by setting the tenant of an event.
+    describe.each([
+      ['without a tenant', false],
+      ['with the tenant of the event', true],
+    ])('%s', (_name, withTenant) => {
+      /** Runs `fn` on the relay connection, inside the event's tenant if asked. */
+      const asRelay = <T>(org: string, fn: (db: Kysely<DB>) => Promise<T>): Promise<T> =>
+        withTenant ? inTenant(relay, org, fn) : fn(relay);
 
-      const result = await relay
-        .updateTable('outbox_events')
-        .set({ published_at: null, last_error: 'again' })
-        .where('id', '=', id)
-        .executeTakeFirst();
-      const row = await relay
-        .selectFrom('outbox_events')
-        .select(['published_at', 'last_error'])
-        .where('id', '=', id)
-        .executeTakeFirstOrThrow();
+      it('marks an unpublished event as published', async () => {
+        const { org, id } = await commitEvent();
 
-      expect(result.numUpdatedRows).toBe(0n);
-      expect(row.published_at).toBeInstanceOf(Date);
-      expect(row.last_error).toBeNull();
+        const result = await asRelay(org, (r) =>
+          r
+            .updateTable('outbox_events')
+            .set({ publish_attempts: 1, published_at: sql<Date>`now()` })
+            .where('id', '=', id)
+            .executeTakeFirst(),
+        );
+
+        expect(result.numUpdatedRows).toBe(1n);
+      });
+
+      it('freezes a published event: the relay can no longer change it', async () => {
+        const { org, id } = await commitEvent();
+        await asRelay(org, (r) =>
+          r
+            .updateTable('outbox_events')
+            .set({ publish_attempts: 1, published_at: sql<Date>`now()` })
+            .where('id', '=', id)
+            .execute(),
+        );
+
+        const result = await asRelay(org, (r) =>
+          r
+            .updateTable('outbox_events')
+            .set({ published_at: null, last_error: 'again' })
+            .where('id', '=', id)
+            .executeTakeFirst(),
+        );
+        const row = await relay
+          .selectFrom('outbox_events')
+          .select(['published_at', 'last_error'])
+          .where('id', '=', id)
+          .executeTakeFirstOrThrow();
+
+        expect(result.numUpdatedRows).toBe(0n);
+        expect(row.published_at).toBeInstanceOf(Date);
+        expect(row.last_error).toBeNull();
+      });
+
+      it('does not delete an event that is not published yet', async () => {
+        const { org, id } = await commitEvent();
+
+        const result = await asRelay(org, (r) =>
+          r.deleteFrom('outbox_events').where('id', '=', id).executeTakeFirst(),
+        );
+        const left = await relay
+          .selectFrom('outbox_events')
+          .select('id')
+          .where('id', '=', id)
+          .execute();
+
+        expect(result.numDeletedRows).toBe(0n);
+        expect(left).toHaveLength(1);
+      });
     });
 
     it('deletes a published event', async () => {
@@ -343,23 +387,6 @@ describe('outbox_events', () => {
 
       expect(result.numDeletedRows).toBe(1n);
       expect(left).toEqual([]);
-    });
-
-    it('does not delete an event that is not published yet', async () => {
-      const { id } = await commitEvent();
-
-      const result = await relay
-        .deleteFrom('outbox_events')
-        .where('id', '=', id)
-        .executeTakeFirst();
-      const left = await relay
-        .selectFrom('outbox_events')
-        .select('id')
-        .where('id', '=', id)
-        .execute();
-
-      expect(result.numDeletedRows).toBe(0n);
-      expect(left).toHaveLength(1);
     });
 
     it.each(['ledgers', 'ledger_logs', 'transactions', 'idempotency_keys'])(

@@ -88,35 +88,52 @@ describe('row-level security', () => {
       const { rows } = await sql<{
         tablename: string;
         policyname: string;
+        permissive: string;
         cmd: string;
         roles: string[];
         qual: string | null;
       }>`
-        select tablename, policyname, cmd, roles::text[] as roles, qual from pg_policies
+        select tablename, policyname, permissive, cmd, roles::text[] as roles, qual
+        from pg_policies
         where schemaname = 'public' and roles <> '{public}'
         order by policyname
       `.execute(db);
 
+      const relay = { tablename: 'outbox_events', roles: ['ledger_relay'] };
       expect(rows).toEqual([
         {
-          tablename: 'outbox_events',
+          ...relay,
           policyname: 'outbox_events_relay_delete',
+          permissive: 'PERMISSIVE',
           cmd: 'DELETE',
-          roles: ['ledger_relay'],
-          qual: '(published_at IS NOT NULL)',
-        },
-        {
-          tablename: 'outbox_events',
-          policyname: 'outbox_events_relay_select',
-          cmd: 'SELECT',
-          roles: ['ledger_relay'],
           qual: 'true',
         },
         {
-          tablename: 'outbox_events',
+          ...relay,
+          policyname: 'outbox_events_relay_delete_published_only',
+          permissive: 'RESTRICTIVE',
+          cmd: 'DELETE',
+          qual: '(published_at IS NOT NULL)',
+        },
+        {
+          ...relay,
+          policyname: 'outbox_events_relay_select',
+          permissive: 'PERMISSIVE',
+          cmd: 'SELECT',
+          qual: 'true',
+        },
+        {
+          ...relay,
           policyname: 'outbox_events_relay_update',
+          permissive: 'PERMISSIVE',
           cmd: 'UPDATE',
-          roles: ['ledger_relay'],
+          qual: 'true',
+        },
+        {
+          ...relay,
+          policyname: 'outbox_events_relay_update_unpublished_only',
+          permissive: 'RESTRICTIVE',
+          cmd: 'UPDATE',
           qual: '(published_at IS NULL)',
         },
       ]);
