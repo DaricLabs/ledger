@@ -18,7 +18,7 @@ From the repo root, once per session:
 ```bash
 # Start Postgres (use "docker compose" if you use Docker)
 podman compose -f compose.test.yaml up -d postgres
-# Create the two roles (ledger_migrator, ledger_runtime)
+# Create the three roles (ledger_migrator, ledger_runtime, ledger_relay)
 podman compose -f compose.test.yaml --profile setup run --rm --no-deps bootstrap
 ```
 
@@ -31,7 +31,8 @@ pnpm test:integration
 Before the first test, a global setup applies the migrations as `ledger_migrator`.
 The tests connect as `ledger_runtime` (the role the apps use), so row-level
 security and grants are really tested. A few tests use `ledger_migrator`, the table
-owner, to check that triggers stop even the owner.
+owner, to check that triggers stop even the owner, and `ledger_relay` to test the
+outbox relay's access.
 
 ## Good to know
 
@@ -40,7 +41,8 @@ owner, to check that triggers stop even the owner.
 - **Tests never clean up.** Each test uses new random tenant ids, so data does not
   clash. The database is meant to be thrown away.
 - **Another database:** set `TEST_LEDGER_MIGRATOR_DATABASE_URL`,
-  `TEST_LEDGER_RUNTIME_DATABASE_URL`, and `TEST_LEDGER_SUPERUSER_DATABASE_URL`.
+  `TEST_LEDGER_RUNTIME_DATABASE_URL`, `TEST_LEDGER_RELAY_DATABASE_URL`, and
+  `TEST_LEDGER_SUPERUSER_DATABASE_URL`.
   These names differ from the `LEDGER_*` ones on purpose, so tests never run
   against your dev database by accident.
 - **New table?** `roles.integration-spec.ts` and `row-level-security.integration-spec.ts`

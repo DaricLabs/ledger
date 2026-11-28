@@ -359,6 +359,7 @@ create table outbox_events (
   created_at       timestamptz not null default now(),
   published_at     timestamptz,
   publish_attempts integer not null default 0,
+  next_attempt_at  timestamptz not null default now(),
   last_error       text,
 
   unique (organization_id, ledger_id, log_seq),
@@ -388,7 +389,10 @@ create table outbox_events (
     check (published_at is null or publish_attempts >= 1),
 
   constraint outbox_events_last_error_requires_attempt
-    check (last_error is null or publish_attempts > 0)
+    check (last_error is null or publish_attempts > 0),
+
+  constraint outbox_events_last_error_length
+    check (last_error is null or length(last_error) <= 1000)
 );
 -- Transactional outbox for reliable event publishing. Each event is written
 -- with the log entry of the same change, so (ledger_id, log_seq) names it for
@@ -402,11 +406,25 @@ create table outbox_events (
 -- publishes them one relay at a time, so each ledger's events leave in order.
 -- It must NOT claim rows in parallel with FOR UPDATE SKIP LOCKED: that would
 -- let a later event of a ledger overtake an earlier one.
+--
+-- Retry: when a publish fails, the relay records the attempt and sets
+-- next_attempt_at to a later time (backoff). While an event of a ledger waits
+-- for its retry, the relay must hold back the later events of that same ledger,
+-- or they would overtake it. Other ledgers go on.
+--
+-- Cleanup: a published event is needed only until the broker has it (the log
+-- keeps the history), so the relay role may delete published rows, see the
+-- policies and grants below.
 
 create index idx_outbox_events_unpublished
   on outbox_events (id)
   where published_at is null;
 -- Supports the relay's read of the oldest unpublished events, in id order.
+
+create index idx_outbox_events_published
+  on outbox_events (published_at)
+  where published_at is not null;
+-- Supports the cleanup of old published events, oldest first.
 
 
 -- ---------- idempotency_keys ---------------------------------------------
@@ -813,10 +831,10 @@ alter table outbox_events         enable row level security;
 alter table idempotency_keys      enable row level security;
 -- RLS is enabled but NOT forced, so the table owner (used by migrations)
 -- still bypasses it. Application connections must use a least-privilege,
--- non-owner role for these policies to take effect. Cross-tenant background
--- workers (e.g. the outbox relay) must either run as a role with BYPASSRLS
--- or set daric.organization_id per unit of work; per-ledger workers (e.g.
--- the audit-anchor worker) simply set the tenant.
+-- non-owner role for these policies to take effect. Per-ledger workers (e.g.
+-- the audit-anchor worker) simply set the tenant. The one cross-tenant worker,
+-- the outbox relay, has its own role (ledger_relay) with its own policies on
+-- outbox_events only, see below. No role has BYPASSRLS.
 
 create policy ledgers_tenant_isolation on ledgers
   using (organization_id = current_organization_id())
@@ -855,6 +873,42 @@ create policy idempotency_keys_tenant_isolation on idempotency_keys
   with check (organization_id = current_organization_id());
 -- Uniform tenant-isolation policies: USING filters reads/updates/deletes,
 -- WITH CHECK prevents writing a row for another tenant.
+
+-- The outbox relay publishes events of every tenant, so it cannot set one
+-- tenant. These policies apply to ledger_relay only. Table grants (end of file)
+-- already limit what the relay can touch. The policies add the row rules.
+--
+-- Policies of one kind are OR-ed, and the tenant policy above also applies to
+-- ledger_relay. So the relay would pass the row rules just by setting the
+-- tenant of an event. That is why the row rules are RESTRICTIVE: they are
+-- AND-ed with everything else and hold whatever tenant the relay sets.
+create policy outbox_events_relay_select on outbox_events
+  for select to ledger_relay
+  using (true);
+
+create policy outbox_events_relay_update on outbox_events
+  for update to ledger_relay
+  using (true)
+  with check (true);
+
+create policy outbox_events_relay_delete on outbox_events
+  for delete to ledger_relay
+  using (true);
+
+-- A published event is frozen: the relay can only change rows not yet published.
+-- WITH CHECK is true, otherwise the new row would also have to be unpublished
+-- and the relay could never mark an event as published.
+create policy outbox_events_relay_update_unpublished_only on outbox_events
+  as restrictive
+  for update to ledger_relay
+  using (published_at is null)
+  with check (true);
+
+-- Cleanup removes published events only, never one that still has to be sent.
+create policy outbox_events_relay_delete_published_only on outbox_events
+  as restrictive
+  for delete to ledger_relay
+  using (published_at is not null);
 
 
 -- ---------- Column comments ----------------------------------------------
@@ -903,6 +957,12 @@ comment on column ledger_audit_anchors.to_log_seq is
 
 comment on column outbox_events.log_seq is
   'ledger_logs.seq of the log entry written for the same change. With ledger_id it is the stable identity of the event.';
+
+comment on column outbox_events.next_attempt_at is
+  'Earliest time the relay may try to publish the event. Set to a later time after a failed attempt (backoff).';
+
+comment on column outbox_events.last_error is
+  'Error of the last failed attempt, at most 1000 characters (the relay cuts it).';
 
 comment on column outbox_events.aggregate_type is
   'Aggregate type name, e.g. transaction, account, ledger.';
@@ -959,11 +1019,9 @@ grant select, insert on transactions to ledger_runtime;
 grant update (metadata, reverted_at, reverted_by_transaction_id)
   on transactions to ledger_runtime;
 
--- outbox_events: the relay only updates publish status.
--- No delete yet. Add it when the cleanup job for old published rows is built.
+-- outbox_events: the app only adds events. It never updates or deletes them.
+-- (SELECT stays because the app's integration tests read events back.)
 grant select, insert on outbox_events to ledger_runtime;
-grant update (published_at, publish_attempts, last_error)
-  on outbox_events to ledger_runtime;
 
 -- idempotency_keys: an expired key is replaced by the next request with the
 -- same key (INSERT ... ON CONFLICT DO UPDATE), so those columns are updatable.
@@ -971,3 +1029,11 @@ grant update (published_at, publish_attempts, last_error)
 grant select, insert, delete on idempotency_keys to ledger_runtime;
 grant update (request_hash, transaction_id, created_at, expires_at)
   on idempotency_keys to ledger_runtime;
+
+-- ledger_relay (created by bootstrap) is the outbox relay and nothing else. It
+-- reads events of all tenants, records publish attempts, and deletes published
+-- events. The row rules are the outbox_events_relay_* policies. It gets no
+-- access to any other table, and cannot change what an event says.
+grant select, delete on outbox_events to ledger_relay;
+grant update (published_at, publish_attempts, next_attempt_at, last_error)
+  on outbox_events to ledger_relay;

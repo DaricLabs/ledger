@@ -1,18 +1,20 @@
 import { randomUUIDv7 } from 'node:crypto';
 import { sql, type Kysely, type Transaction } from 'kysely';
 import type { DB } from '../../src/storage.js';
-import { createRuntimeDb, inTenant } from '../support/db.js';
+import { createRelayDb, createRuntimeDb, inTenant } from '../support/db.js';
 import { insertLedger, insertLog, insertOutboxEvent } from '../support/fixtures.js';
 
 describe('outbox_events', () => {
   let db: Kysely<DB>;
+  let relay: Kysely<DB>;
 
   beforeAll(() => {
     db = createRuntimeDb();
+    relay = createRelayDb();
   });
 
   afterAll(async () => {
-    await db.destroy();
+    await Promise.all([db.destroy(), relay.destroy()]);
   });
 
   /** Runs `fn` inside a fresh ledger of a fresh tenant. */
@@ -24,6 +26,16 @@ describe('outbox_events', () => {
       const ledger = await insertLedger(trx, org);
       return fn(trx, org, ledger.id);
     });
+  }
+
+  /** Commits an event as the app does and returns its id (the relay reads committed rows). */
+  async function commitEvent(
+    values: Parameters<typeof insertOutboxEvent>[3] = {},
+  ): Promise<{ org: string; id: string }> {
+    return withLedger(async (trx, org, ledgerId) => ({
+      org,
+      id: String(await insertOutboxEvent(trx, org, ledgerId, values)),
+    }));
   }
 
   it('starts unpublished, with no attempts and version 1', async () => {
@@ -43,31 +55,7 @@ describe('outbox_events', () => {
       event_version: 1,
       payload: {},
     });
-  });
-
-  it('lets the relay record a failed attempt and then a success', async () => {
-    const event = await withLedger(async (trx, org, ledgerId) => {
-      const id = String(await insertOutboxEvent(trx, org, ledgerId));
-      await trx
-        .updateTable('outbox_events')
-        .set({ publish_attempts: 1, last_error: 'broker timeout' })
-        .where('id', '=', id)
-        .execute();
-      await trx
-        .updateTable('outbox_events')
-        .set({ publish_attempts: 2, last_error: null, published_at: sql<Date>`now()` })
-        .where('id', '=', id)
-        .execute();
-      return trx
-        .selectFrom('outbox_events')
-        .selectAll()
-        .where('id', '=', id)
-        .executeTakeFirstOrThrow();
-    });
-
-    expect(event.publish_attempts).toBe(2);
-    expect(event.last_error).toBeNull();
-    expect(event.published_at).toBeInstanceOf(Date);
+    expect(event.next_attempt_at).toEqual(event.created_at);
   });
 
   it.each([
@@ -101,6 +89,11 @@ describe('outbox_events', () => {
       'an aggregate_type over 64 characters',
       { aggregate_type: 'a'.repeat(65) },
       'outbox_events_aggregate_type_valid',
+    ],
+    [
+      'a last_error over 1000 characters',
+      { last_error: 'e'.repeat(1001), publish_attempts: 1 },
+      'outbox_events_last_error_length',
     ],
     ['an empty aggregate_id', { aggregate_id: '' }, 'outbox_events_aggregate_id_length'],
     [
@@ -175,6 +168,14 @@ describe('outbox_events', () => {
     });
   });
 
+  it('accepts a last_error of exactly 1000 characters', async () => {
+    const id = await withLedger((trx, org, ledgerId) =>
+      insertOutboxEvent(trx, org, ledgerId, { last_error: 'e'.repeat(1000), publish_attempts: 1 }),
+    );
+
+    expect(id).toBeGreaterThan(0);
+  });
+
   it('does not let the app change the payload of an event', async () => {
     await expect(
       withLedger(async (trx, org, ledgerId) => {
@@ -188,12 +189,213 @@ describe('outbox_events', () => {
     ).rejects.toMatchObject({ code: '42501' });
   });
 
-  it('does not let the app delete events (yet)', async () => {
+  it('does not let the app record publish status (only the relay does)', async () => {
+    await expect(
+      withLedger(async (trx, org, ledgerId) => {
+        const id = String(await insertOutboxEvent(trx, org, ledgerId));
+        await trx
+          .updateTable('outbox_events')
+          .set({ publish_attempts: 1, published_at: sql<Date>`now()` })
+          .where('id', '=', id)
+          .execute();
+      }),
+    ).rejects.toMatchObject({ code: '42501' });
+  });
+
+  it('does not let the app delete events', async () => {
     await expect(
       withLedger(async (trx, org, ledgerId) => {
         await insertOutboxEvent(trx, org, ledgerId);
         await sql`delete from outbox_events`.execute(trx);
       }),
     ).rejects.toMatchObject({ code: '42501' });
+  });
+
+  describe('as the relay (ledger_relay)', () => {
+    it('sees the events of every tenant without setting a tenant', async () => {
+      const a = await commitEvent();
+      const b = await commitEvent();
+
+      const rows = await relay
+        .selectFrom('outbox_events')
+        .select(['id', 'organization_id'])
+        .where('id', 'in', [a.id, b.id])
+        .execute();
+
+      expect(rows.map((r) => r.organization_id).sort()).toEqual([a.org, b.org].sort());
+    });
+
+    it('records a failed attempt with a retry time, and then a success', async () => {
+      const { id } = await commitEvent();
+      const retryAt = new Date(Date.now() + 60_000);
+
+      await relay
+        .updateTable('outbox_events')
+        .set({ publish_attempts: 1, last_error: 'broker timeout', next_attempt_at: retryAt })
+        .where('id', '=', id)
+        .execute();
+      const failed = await relay
+        .selectFrom('outbox_events')
+        .selectAll()
+        .where('id', '=', id)
+        .executeTakeFirstOrThrow();
+      await relay
+        .updateTable('outbox_events')
+        .set({ publish_attempts: 2, last_error: null, published_at: sql<Date>`now()` })
+        .where('id', '=', id)
+        .execute();
+      const published = await relay
+        .selectFrom('outbox_events')
+        .selectAll()
+        .where('id', '=', id)
+        .executeTakeFirstOrThrow();
+
+      expect(failed).toMatchObject({ publish_attempts: 1, last_error: 'broker timeout' });
+      expect(failed.next_attempt_at).toEqual(retryAt);
+      expect(published.publish_attempts).toBe(2);
+      expect(published.last_error).toBeNull();
+      expect(published.published_at).toBeInstanceOf(Date);
+    });
+
+    it('does not let the relay cut in with an error longer than 1000 characters', async () => {
+      const { id } = await commitEvent();
+
+      await expect(
+        relay
+          .updateTable('outbox_events')
+          .set({ publish_attempts: 1, last_error: 'e'.repeat(1001) })
+          .where('id', '=', id)
+          .execute(),
+      ).rejects.toMatchObject({ code: '23514', constraint: 'outbox_events_last_error_length' });
+    });
+
+    it.each([
+      ['payload', { payload: { tampered: true } }],
+      ['event_type', { event_type: 'ledger.transaction.reverted' }],
+      ['log_seq', { log_seq: 1 }],
+      ['created_at', { created_at: new Date(0) }],
+    ])('does not let the relay change %s', async (_column, values) => {
+      const { id } = await commitEvent();
+
+      await expect(
+        relay.updateTable('outbox_events').set(values).where('id', '=', id).execute(),
+      ).rejects.toMatchObject({ code: '42501' });
+    });
+
+    it('does not let the relay add events', async () => {
+      await expect(
+        relay
+          .insertInto('outbox_events')
+          .values({
+            organization_id: randomUUIDv7(),
+            ledger_id: randomUUIDv7(),
+            log_seq: 1,
+            aggregate_type: 'transaction',
+            aggregate_id: randomUUIDv7(),
+            event_type: 'ledger.transaction.created',
+            payload: {},
+          })
+          .execute(),
+      ).rejects.toMatchObject({ code: '42501' });
+    });
+
+    // The relay must not get around the row rules by setting the tenant of an event.
+    describe.each([
+      ['without a tenant', false],
+      ['with the tenant of the event', true],
+    ])('%s', (_name, withTenant) => {
+      /** Runs `fn` on the relay connection, inside the event's tenant if asked. */
+      const asRelay = <T>(org: string, fn: (db: Kysely<DB>) => Promise<T>): Promise<T> =>
+        withTenant ? inTenant(relay, org, fn) : fn(relay);
+
+      it('marks an unpublished event as published', async () => {
+        const { org, id } = await commitEvent();
+
+        const result = await asRelay(org, (r) =>
+          r
+            .updateTable('outbox_events')
+            .set({ publish_attempts: 1, published_at: sql<Date>`now()` })
+            .where('id', '=', id)
+            .executeTakeFirst(),
+        );
+
+        expect(result.numUpdatedRows).toBe(1n);
+      });
+
+      it('freezes a published event: the relay can no longer change it', async () => {
+        const { org, id } = await commitEvent();
+        await asRelay(org, (r) =>
+          r
+            .updateTable('outbox_events')
+            .set({ publish_attempts: 1, published_at: sql<Date>`now()` })
+            .where('id', '=', id)
+            .execute(),
+        );
+
+        const result = await asRelay(org, (r) =>
+          r
+            .updateTable('outbox_events')
+            .set({ published_at: null, last_error: 'again' })
+            .where('id', '=', id)
+            .executeTakeFirst(),
+        );
+        const row = await relay
+          .selectFrom('outbox_events')
+          .select(['published_at', 'last_error'])
+          .where('id', '=', id)
+          .executeTakeFirstOrThrow();
+
+        expect(result.numUpdatedRows).toBe(0n);
+        expect(row.published_at).toBeInstanceOf(Date);
+        expect(row.last_error).toBeNull();
+      });
+
+      it('does not delete an event that is not published yet', async () => {
+        const { org, id } = await commitEvent();
+
+        const result = await asRelay(org, (r) =>
+          r.deleteFrom('outbox_events').where('id', '=', id).executeTakeFirst(),
+        );
+        const left = await relay
+          .selectFrom('outbox_events')
+          .select('id')
+          .where('id', '=', id)
+          .execute();
+
+        expect(result.numDeletedRows).toBe(0n);
+        expect(left).toHaveLength(1);
+      });
+    });
+
+    it('deletes a published event', async () => {
+      const { id } = await commitEvent();
+      await relay
+        .updateTable('outbox_events')
+        .set({ publish_attempts: 1, published_at: sql<Date>`now()` })
+        .where('id', '=', id)
+        .execute();
+
+      const result = await relay
+        .deleteFrom('outbox_events')
+        .where('id', '=', id)
+        .executeTakeFirst();
+      const left = await relay
+        .selectFrom('outbox_events')
+        .select('id')
+        .where('id', '=', id)
+        .execute();
+
+      expect(result.numDeletedRows).toBe(1n);
+      expect(left).toEqual([]);
+    });
+
+    it.each(['ledgers', 'ledger_logs', 'transactions', 'idempotency_keys'])(
+      'cannot read %s',
+      async (table) => {
+        await expect(sql`select 1 from ${sql.table(table)}`.execute(relay)).rejects.toMatchObject({
+          code: '42501',
+        });
+      },
+    );
   });
 });

@@ -41,5 +41,6 @@ services:
         '-v', 'ON_ERROR_STOP=1', '-v', 'dbname=ledger',
         '-v', 'migrator_password=${LEDGER_MIGRATOR_PASSWORD:-password}',
         '-v', 'runtime_password=${LEDGER_RUNTIME_PASSWORD:-password}',
+        '-v', 'relay_password=${LEDGER_RELAY_PASSWORD:-password}',
         '-f', '/bootstrap/0001_roles.sql',
       ]

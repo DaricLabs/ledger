@@ -151,6 +151,7 @@ export async function insertOutboxEvent(
     event_version: number;
     publish_attempts: number;
     published_at: Date | null;
+    next_attempt_at: Date;
     last_error: string | null;
   }> = {},
 ): Promise<number> {

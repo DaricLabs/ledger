@@ -14,6 +14,9 @@ export const testDatabaseUrls = {
   runtime:
     process.env.TEST_LEDGER_RUNTIME_DATABASE_URL ??
     'postgres://ledger_runtime:password@127.0.0.1:5433/ledger',
+  relay:
+    process.env.TEST_LEDGER_RELAY_DATABASE_URL ??
+    'postgres://ledger_relay:password@127.0.0.1:5433/ledger',
   superuser:
     process.env.TEST_LEDGER_SUPERUSER_DATABASE_URL ??
     'postgres://postgres:postgres@127.0.0.1:5433/ledger',

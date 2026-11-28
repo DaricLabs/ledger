@@ -61,7 +61,7 @@ describe('row-level security', () => {
       expect(rows.map((r) => r.table_name)).toEqual([...TENANT_TABLES].sort());
     });
 
-    it.each(TENANT_TABLES)('%s: RLS is on, with one policy for all commands', async (table) => {
+    it.each(TENANT_TABLES)('%s: RLS is on, with one tenant policy for all roles', async (table) => {
       const { rows: tables } = await sql<{ relrowsecurity: boolean }>`
         select relrowsecurity from pg_class
         where relnamespace = 'public'::regnamespace and relname = ${table}
@@ -73,7 +73,7 @@ describe('row-level security', () => {
         with_check: string;
       }>`
         select policyname, cmd, qual, with_check from pg_policies
-        where schemaname = 'public' and tablename = ${table}
+        where schemaname = 'public' and tablename = ${table} and roles = '{public}'
       `.execute(db);
 
       expect(tables).toEqual([{ relrowsecurity: true }]);
@@ -82,6 +82,61 @@ describe('row-level security', () => {
       expect(policies[0].cmd).toBe('ALL');
       expect(policies[0].qual).toContain('current_organization_id()');
       expect(policies[0].with_check).toContain('current_organization_id()');
+    });
+
+    it('gives only the outbox relay role extra policies, and only on outbox_events', async () => {
+      const { rows } = await sql<{
+        tablename: string;
+        policyname: string;
+        permissive: string;
+        cmd: string;
+        roles: string[];
+        qual: string | null;
+      }>`
+        select tablename, policyname, permissive, cmd, roles::text[] as roles, qual
+        from pg_policies
+        where schemaname = 'public' and roles <> '{public}'
+        order by policyname
+      `.execute(db);
+
+      const relay = { tablename: 'outbox_events', roles: ['ledger_relay'] };
+      expect(rows).toEqual([
+        {
+          ...relay,
+          policyname: 'outbox_events_relay_delete',
+          permissive: 'PERMISSIVE',
+          cmd: 'DELETE',
+          qual: 'true',
+        },
+        {
+          ...relay,
+          policyname: 'outbox_events_relay_delete_published_only',
+          permissive: 'RESTRICTIVE',
+          cmd: 'DELETE',
+          qual: '(published_at IS NOT NULL)',
+        },
+        {
+          ...relay,
+          policyname: 'outbox_events_relay_select',
+          permissive: 'PERMISSIVE',
+          cmd: 'SELECT',
+          qual: 'true',
+        },
+        {
+          ...relay,
+          policyname: 'outbox_events_relay_update',
+          permissive: 'PERMISSIVE',
+          cmd: 'UPDATE',
+          qual: 'true',
+        },
+        {
+          ...relay,
+          policyname: 'outbox_events_relay_update_unpublished_only',
+          permissive: 'RESTRICTIVE',
+          cmd: 'UPDATE',
+          qual: '(published_at IS NULL)',
+        },
+      ]);
     });
   });
 

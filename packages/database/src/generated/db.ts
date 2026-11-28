@@ -146,12 +146,19 @@ export interface OutboxEvents {
   event_type: string;
   event_version: Generated<number>;
   id: Generated<Int8>;
+  /**
+   * Error of the last failed attempt, at most 1000 characters (the relay cuts it).
+   */
   last_error: string | null;
   ledger_id: string;
   /**
    * ledger_logs.seq of the log entry written for the same change. With ledger_id it is the stable identity of the event.
    */
   log_seq: Int8;
+  /**
+   * Earliest time the relay may try to publish the event. Set to a later time after a failed attempt (backoff).
+   */
+  next_attempt_at: Generated<Timestamp>;
   organization_id: string;
   payload: Json;
   publish_attempts: Generated<number>;

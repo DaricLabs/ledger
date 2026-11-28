@@ -16,6 +16,14 @@ export function createRuntimeDb(maxConnections?: number): Kysely<DB> {
   return createTestDb(testDatabaseUrls.runtime, maxConnections);
 }
 
+/**
+ * Connects as `ledger_relay`, the outbox relay. It sets no tenant: its own
+ * policies on `outbox_events` let it see the events of every tenant.
+ */
+export function createRelayDb(maxConnections?: number): Kysely<DB> {
+  return createTestDb(testDatabaseUrls.relay, maxConnections);
+}
+
 /** Connects as `ledger_migrator`, the table owner. It bypasses RLS and has all privileges. */
 export function createMigratorDb(maxConnections?: number): Kysely<DB> {
   return createTestDb(testDatabaseUrls.migrator, maxConnections);
