@@ -1,6 +1,6 @@
 # Bootstrap
 
-One-time setup that creates the two database users. It is **not** a migration.
+One-time setup that creates the three database users. It is **not** a migration.
 
 ## Who runs it
 
@@ -10,15 +10,18 @@ A user with only `CREATEROLE` is not enough. Changing `NOBYPASSRLS` needs a supe
 
 ## Roles it creates
 
-| Role              | Used by                       | Can do                                         |
-| ----------------- | ----------------------------- | ---------------------------------------------- |
-| `ledger_migrator` | `pnpm migrate` only           | Create and change tables (owns them)           |
-| `ledger_runtime`  | `ledger-api`, `ledger-worker` | Only what each migration grants it (see below) |
+| Role              | Used by                       | Can do                                                         |
+| ----------------- | ----------------------------- | -------------------------------------------------------------- |
+| `ledger_migrator` | `pnpm migrate` only           | Create and change tables (owns them)                           |
+| `ledger_runtime`  | `ledger-api`, `ledger-worker` | Only what each migration grants it (see below)                 |
+| `ledger_relay`    | the outbox relay              | Read, publish-status update and delete on `outbox_events` only |
 
 Tables are **not** granted automatically. Every migration that creates a table must also `grant` the least access `ledger_runtime` needs (see the end of `0001_init.sql`). A table without a grant fails with `permission denied`, so a missing grant is easy to notice. Append-only tables get `select, insert` only; this protects them even if a trigger is dropped by mistake.
 
 `ledger_runtime` must NOT be superuser or have BYPASSRLS. Row-level security
 (tenant isolation) does not apply to such roles.
+
+`ledger_relay` is the only role that reads across tenants. It has no BYPASSRLS either: it gets its own row-level policies on `outbox_events` (`outbox_events_relay_*` in `0001_init.sql`), so it can see every tenant's events, change only unpublished ones, and delete only published ones. It has no access to any other table. Its table list is checked in `roles.integration-spec.ts`.
 
 ## Before you run it
 
@@ -30,6 +33,7 @@ Tables are **not** granted automatically. Every migration that creates a table m
 ```bash
 psql "$LEDGER_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -v dbname=ledger \
   -v migrator_password="$MIGRATOR_PW" -v runtime_password="$RUNTIME_PW" \
+  -v relay_password="$RELAY_PW" \
   -f packages/database/bootstrap/0001_roles.sql
 ```
 
@@ -40,12 +44,13 @@ With Postgres in Docker and no local `psql`:
 ```bash
 docker compose exec -T postgres psql -U postgres -d ledger -v ON_ERROR_STOP=1 \
   -v dbname=ledger -v migrator_password="$MIGRATOR_PW" -v runtime_password="$RUNTIME_PW" \
+  -v relay_password="$RELAY_PW" \
   -f - < packages/database/bootstrap/0001_roles.sql
 ```
 
 ## Safe to re-run
 
-Running it again fixes role attributes and rotates both passwords.
+Running it again fixes role attributes and rotates all three passwords.
 
 If it fails halfway (for example, you ran it as a non-superuser), fix the cause
 and run it again. Nothing needs to be cleaned up first.
@@ -61,10 +66,10 @@ use the `psql` command above and skip this script.
 ```sql
 select rolname, rolsuper, rolbypassrls, rolcreatedb, rolcreaterole
 from pg_roles
-where rolname in ('ledger_migrator', 'ledger_runtime');
+where rolname in ('ledger_migrator', 'ledger_runtime', 'ledger_relay');
 ```
 
-You should see two rows, and all four flags must be `false`.
+You should see three rows, and all four flags must be `false`.
 
 ## Order
 
